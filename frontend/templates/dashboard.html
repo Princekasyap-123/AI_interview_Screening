@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recruiter Dashboard — White Force</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #14161A;
+    --panel: #1B1E24;
+    --panel-hover: #22252C;
+    --text: #F5F3EF;
+    --text-dim: #8A8F98;
+    --text-faint: #5C6068;
+    --accent: #3B5F52;
+    --accent-bright: #5B8A76;
+    --warn: #C9432B;
+    --warn-bg: #2A1815;
+    --border: #2A2D34;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+    font-size: 14px;
+  }
+
+  a { color: inherit; text-decoration: none; }
+
+  /* ---------- Header ---------- */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 28px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .brand {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .brand span {
+    color: var(--text-dim);
+    font-weight: 400;
+    margin-left: 8px;
+  }
+
+  .filter-bar {
+    display: flex;
+    gap: 6px;
+  }
+
+  .filter-chip {
+    padding: 6px 13px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    font-size: 12.5px;
+    color: var(--text-dim);
+  }
+  .filter-chip.active {
+    border-color: var(--accent-bright);
+    color: var(--text);
+    background: rgba(91, 138, 118, 0.1);
+  }
+  .filter-chip:hover:not(.active) {
+    border-color: var(--text-faint);
+  }
+
+  /* ---------- Create session form ---------- */
+  .create-session {
+    padding: 16px 28px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .create-session form {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .create-session select,
+  .create-session textarea,
+  .create-session input[type="number"] {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 8px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 13px;
+  }
+
+  .create-session select { min-width: 180px; }
+  .create-session textarea { flex: 1; min-width: 300px; resize: vertical; }
+  .create-session input[type="number"] { width: 70px; }
+
+  .create-session button {
+    background: var(--accent-bright);
+    color: var(--bg);
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .create-session button:hover {
+    background: var(--accent);
+    color: var(--text);
+  }
+
+  /* ---------- Layout ---------- */
+  .layout {
+    display: grid;
+    grid-template-columns: 360px 1fr;
+    min-height: calc(100vh - 61px);
+  }
+
+  /* ---------- Session list (left) ---------- */
+  .session-list {
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    max-height: calc(100vh - 61px);
+  }
+
+  .session-row {
+    display: block;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .session-row:hover { background: var(--panel-hover); }
+  .session-row.selected {
+    background: var(--panel);
+    border-left: 2px solid var(--accent-bright);
+    padding-left: 18px;
+  }
+
+  .session-row-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 4px;
+  }
+
+  .session-name {
+    font-weight: 500;
+    font-size: 14px;
+  }
+
+  .session-score {
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+  }
+  .session-score.high { color: var(--accent-bright); }
+  .session-score.low { color: var(--warn); }
+
+  .session-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-faint);
+  }
+
+  .status-pill {
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+  }
+  .status-pill.completed { color: var(--accent-bright); border-color: rgba(91,138,118,0.35); }
+  .status-pill.terminated { color: var(--warn); border-color: rgba(201,67,43,0.35); }
+  .status-pill.in_progress { color: #D9B85B; border-color: rgba(217,184,91,0.35); }
+  .status-pill.pending { color: var(--text-faint); }
+
+  .risk-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-faint);
+  }
+  .risk-dot.flagged { background: var(--warn); }
+
+  .empty-list {
+    padding: 40px 24px;
+    color: var(--text-faint);
+    font-size: 13px;
+    text-align: center;
+  }
+
+  /* ---------- Detail panel (right) ---------- */
+  .detail {
+    padding: 32px 40px;
+    max-width: 760px;
+  }
+
+  .detail-empty {
+    padding: 80px 40px;
+    text-align: center;
+    color: var(--text-faint);
+    font-size: 13.5px;
+  }
+
+  .detail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 28px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .detail-name {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .detail-email {
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+
+  .score-badge {
+    text-align: right;
+  }
+  .score-badge .num {
+    font-size: 32px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .score-badge .label {
+    font-size: 11px;
+    color: var(--text-faint);
+    margin-top: 4px;
+  }
+
+  .section {
+    margin-bottom: 28px;
+  }
+  .section-title {
+    font-size: 12px;
+    color: var(--text-faint);
+    margin-bottom: 10px;
+  }
+
+  .category-scores {
+    display: flex;
+    gap: 24px;
+  }
+  .category-score {
+    flex: 1;
+  }
+  .category-score .val {
+    font-size: 20px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .category-score .name {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  .prose {
+    font-family: 'Source Serif 4', serif;
+    font-size: 15px;
+    line-height: 1.65;
+    color: var(--text);
+    max-width: 65ch;
+  }
+
+  .content-flags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .flag-chip {
+    font-size: 11.5px;
+    padding: 3px 9px;
+    border-radius: 3px;
+    background: var(--warn-bg);
+    color: #E48B7A;
+    border: 1px solid rgba(201,67,43,0.3);
+  }
+
+  .proctoring-summary {
+    display: flex;
+    gap: 28px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    margin-bottom: 14px;
+  }
+  .proctoring-stat .val {
+    font-size: 18px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .proctoring-stat.warn .val { color: var(--warn); }
+  .proctoring-stat .name {
+    font-size: 11.5px;
+    color: var(--text-faint);
+    margin-top: 2px;
+  }
+
+  .flag-timeline {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .flag-row {
+    display: grid;
+    grid-template-columns: 90px 1fr 70px;
+    gap: 12px;
+    padding: 9px 14px;
+    font-size: 12.5px;
+    border-bottom: 1px solid var(--border);
+  }
+  .flag-row:last-child { border-bottom: none; }
+  .flag-time { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+  .flag-type { color: var(--text); }
+  .flag-counted { text-align: right; font-size: 11px; }
+  .flag-counted.yes { color: var(--warn); }
+  .flag-counted.no { color: var(--text-faint); }
+
+  .qa-item {
+    padding: 16px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .qa-item:last-child { border-bottom: none; }
+  .qa-question {
+    font-weight: 500;
+    margin-bottom: 8px;
+    font-size: 14px;
+  }
+  .qa-tag {
+    font-size: 11px;
+    color: var(--text-faint);
+    margin-left: 8px;
+    font-weight: 400;
+  }
+  .qa-answer {
+    font-family: 'Source Serif 4', serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+  .qa-scores {
+    display: flex;
+    gap: 14px;
+    font-size: 12px;
+    color: var(--text-faint);
+  }
+  .qa-scores span strong { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+  .no-answer {
+    font-size: 13px;
+    color: var(--text-faint);
+    font-style: italic;
+  }
+
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    .session-list { max-height: 40vh; border-right: none; border-bottom: 1px solid var(--border); }
+    .detail { padding: 24px 20px; }
+    .create-session form { flex-direction: column; }
+    .create-session select,
+    .create-session textarea,
+    .create-session input[type="number"] { width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="brand">White Force<span>Interview Dashboard</span></div>
+    <div class="filter-bar">
+      <a href="?" class="filter-chip {% if not status_filter %}active{% endif %}">All</a>
+      {% for value, label in status_choices %}
+        <a href="?status={{ value }}" class="filter-chip {% if status_filter == value %}active{% endif %}">{{ label }}</a>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="create-session">
+    <form method="post">
+      {% csrf_token %}
+      <select name="candidate_id" required>
+        <option value="" disabled selected>Select candidate</option>
+        {% for c in candidates %}
+          <option value="{{ c.id }}">{{ c.name }}</option>
+        {% endfor %}
+      </select>
+      <textarea name="job_description_text" required placeholder="Paste job description here..." rows="2"></textarea>
+      <input type="number" name="max_questions" value="5" min="1" max="15">
+      <button type="submit">Create Session</button>
+    </form>
+  </div>
+
+  <div class="layout">
+
+    <!-- ---------- Session list ---------- -->
+    <div class="session-list">
+      {% for session in sessions %}
+        <a href="?session_id={{ session.id }}{% if status_filter %}&status={{ status_filter }}{% endif %}"
+           class="session-row {% if selected_session and selected_session.id == session.id %}selected{% endif %}">
+          <div class="session-row-top">
+            <span class="session-name">{{ session.candidate.name }}</span>
+            {% if session.final_rating %}
+              <span class="session-score {% if session.final_rating.overall_score >= 70 %}high{% elif session.final_rating.overall_score < 40 %}low{% endif %}">
+                {{ session.final_rating.overall_score|floatformat:0 }}
+              </span>
+            {% else %}
+              <span class="session-score">—</span>
+            {% endif %}
+          </div>
+          <div class="session-meta">
+            <span class="status-pill {{ session.status }}">{{ session.get_status_display }}</span>
+            {% if session.proctoring_session and session.proctoring_session.countable_violation_count > 0 %}
+              <span class="risk-dot flagged"></span>
+            {% else %}
+              <span class="risk-dot"></span>
+            {% endif %}
+            <span>{{ session.questions_asked_count }}/{{ session.max_questions }} answered</span>
+          </div>
+        </a>
+      {% empty %}
+        <div class="empty-list">No interview sessions yet.</div>
+      {% endfor %}
+    </div>
+
+    <!-- ---------- Detail panel ---------- -->
+    <div class="detail">
+      {% if not selected_session %}
+        <div class="detail-empty">Select a candidate from the list to view their interview.</div>
+
+      {% else %}
+        <div class="detail-header">
+          <div>
+            <div class="detail-name">{{ selected_session.candidate.name }}</div>
+            <div class="detail-email">{{ selected_session.candidate.email }}</div>
+          </div>
+          {% if selected_session.final_rating %}
+            <div class="score-badge">
+              <div class="num">{{ selected_session.final_rating.overall_score|floatformat:0 }}</div>
+              <div class="label">Overall score</div>
+            </div>
+          {% endif %}
+        </div>
+
+        {% if selected_session.status == 'terminated' %}
+          <div class="section">
+            <div class="section-title">Termination reason</div>
+            <div class="prose">{{ selected_session.termination_note }}</div>
+          </div>
+        {% endif %}
+
+        {% if selected_session.final_rating %}
+          <div class="section">
+            <div class="section-title">Category scores</div>
+            <div class="category-scores">
+              {% for key, val in selected_session.final_rating.category_scores.items %}
+                <div class="category-score">
+                  <div class="val">{{ val|floatformat:0 }}</div>
+                  <div class="name">{{ key|title }}</div>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+
+          {% if selected_session.final_rating.strengths %}
+            <div class="section">
+              <div class="section-title">Strengths</div>
+              <div class="prose">{{ selected_session.final_rating.strengths }}</div>
+            </div>
+          {% endif %}
+
+          {% if selected_session.final_rating.concerns %}
+            <div class="section">
+              <div class="section-title">Concerns</div>
+              <div class="prose">{{ selected_session.final_rating.concerns }}</div>
+            </div>
+          {% endif %}
+
+          {% if selected_session.final_rating.content_flags %}
+            <div class="section">
+              <div class="section-title">Flags</div>
+              <div class="content-flags">
+                {% for flag in selected_session.final_rating.content_flags %}
+                  <span class="flag-chip">{{ flag }}</span>
+                {% endfor %}
+              </div>
+            </div>
+          {% endif %}
+        {% else %}
+          <div class="section">
+            <div class="prose" style="color: var(--text-faint);">Rating not yet generated for this session.</div>
+          </div>
+        {% endif %}
+
+        {% if selected_session.proctoring_session %}
+          <div class="section">
+            <div class="section-title">Proctoring</div>
+            <div class="proctoring-summary">
+              <div class="proctoring-stat">
+                <div class="val">{{ selected_session.proctoring_session.risk_score|floatformat:0 }}</div>
+                <div class="name">Risk score</div>
+              </div>
+              <div class="proctoring-stat {% if selected_session.proctoring_session.countable_violation_count > 0 %}warn{% endif %}">
+                <div class="val">{{ selected_session.proctoring_session.countable_violation_count }}</div>
+                <div class="name">Violations</div>
+              </div>
+              <div class="proctoring-stat">
+                <div class="val">{{ selected_session.proctoring_session.flags.count }}</div>
+                <div class="name">Total signals logged</div>
+              </div>
+            </div>
+
+            {% if selected_session.proctoring_session.flags.all %}
+              <div class="flag-timeline">
+                {% for flag in selected_session.proctoring_session.flags.all %}
+                  <div class="flag-row">
+                    <span class="flag-time">{{ flag.occurred_at|time:"H:i:s" }}</span>
+                    <span class="flag-type">{{ flag.get_flag_type_display }}</span>
+                    <span class="flag-counted {% if flag.counted_toward_violation %}yes{% else %}no{% endif %}">
+                      {% if flag.counted_toward_violation %}counted{% else %}logged{% endif %}
+                    </span>
+                  </div>
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+        {% endif %}
+
+        <div class="section">
+          <div class="section-title">Transcript</div>
+          {% for question in selected_session.questions.all %}
+            <div class="qa-item">
+              <div class="qa-question">
+                Q{{ question.order }}. {{ question.text }}
+                <span class="qa-tag">{{ question.topic_tag }}</span>
+              </div>
+              {% if question.answer and question.answer.transcript_text %}
+                <div class="qa-answer">{{ question.answer.transcript_text }}</div>
+                <div class="qa-scores">
+                  <span>Relevance <strong>{{ question.answer.analysis_json.relevance|default:"—" }}</strong></span>
+                  <span>Depth <strong>{{ question.answer.analysis_json.depth|default:"—" }}</strong></span>
+                  <span>Communication <strong>{{ question.answer.analysis_json.communication|default:"—" }}</strong></span>
+                </div>
+              {% else %}
+                <div class="no-answer">Not answered — interview ended before this question.</div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+
+      {% endif %}
+    </div>
+
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,180 @@
+import uuid
+
+from django.conf import settings
+from django.db import models
+
+
+class InterviewSession(models.Model):
+    """
+    One end-to-end interview attempt for a candidate.
+    Tracks lifecycle state, question budget, and how/why it ended.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        IN_PROGRESS = "in_progress", "In progress"
+        COMPLETED = "completed", "Completed"
+        TERMINATED = "terminated", "Terminated early"
+
+    class TerminationReason(models.TextChoices):
+        NONE = "none", "Not terminated"
+        PROCTORING_VIOLATION = "proctoring_violation", "Repeated proctoring violation"
+        CANDIDATE_LEFT = "candidate_left", "Candidate disconnected"
+        TECHNICAL_ERROR = "technical_error", "Technical error"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    candidate = models.ForeignKey(
+        "candidates.Candidate",
+        on_delete=models.CASCADE,
+        related_name="interview_sessions",
+    )
+
+    # Optional link if you're generating questions against a specific JD
+    # rather than just the candidate's general profile.
+    job_description_text = models.TextField(blank=True)
+
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PENDING
+    )
+
+    max_questions = models.PositiveSmallIntegerField(default=8)
+    questions_asked_count = models.PositiveSmallIntegerField(default=0)
+
+    termination_reason = models.CharField(
+        max_length=30,
+        choices=TerminationReason.choices,
+        default=TerminationReason.NONE,
+    )
+
+    # Freeform note shown internally (and optionally echoed to candidate
+    # in the termination overlay) when a session ends early.
+    termination_note = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status"]),
+            models.Index(fields=["candidate", "status"]),
+        ]
+
+    def __str__(self):
+        return f"Interview {self.id} — {self.candidate} ({self.status})"
+
+    @property
+    def is_active(self):
+        return self.status == self.Status.IN_PROGRESS
+
+    @property
+    def has_reached_question_limit(self):
+        return self.questions_asked_count >= self.max_questions
+
+
+class Question(models.Model):
+    """
+    A single AI-generated interview question, tied to the session and
+    (optionally) the profile skill/topic it was generated from.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    session = models.ForeignKey(
+        InterviewSession, on_delete=models.CASCADE, related_name="questions"
+    )
+
+    order = models.PositiveSmallIntegerField()
+    text = models.TextField()
+
+    # e.g. "django_orm", "system_design", "behavioral" — used for
+    # generation traceability and later reporting, not shown to candidate.
+    topic_tag = models.CharField(max_length=100, blank=True)
+
+    # Raw generation context sent to the LLM, kept for debugging/audit.
+    generation_context = models.JSONField(default=dict, blank=True)
+
+    asked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["session", "order"]
+        unique_together = ("session", "order")
+
+    def __str__(self):
+        return f"Q{self.order} — {self.text[:60]}"
+
+
+class Answer(models.Model):
+    """
+    Candidate's response to a Question: raw transcript plus backend-only
+    analysis. Nothing on this model should ever reach a candidate-facing
+    serializer — enforce that at the view/serializer layer.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    question = models.OneToOneField(
+        Question, on_delete=models.CASCADE, related_name="answer"
+    )
+
+    transcript_text = models.TextField(blank=True)
+
+    # Path/reference to the stored audio chunk, if you keep raw audio.
+    audio_ref = models.CharField(max_length=500, blank=True)
+
+    # Structured LLM output: e.g. {"relevance": 7, "depth": 6,
+    # "communication": 8, "notes": "...", "red_flags": []}
+    analysis_json = models.JSONField(default=dict, blank=True)
+
+    # Convenience denormalized score pulled from analysis_json for
+    # fast querying/sorting on the dashboard.
+    score = models.FloatField(null=True, blank=True)
+
+    answered_at = models.DateTimeField(null=True, blank=True)
+    analyzed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["question__order"]
+
+    def __str__(self):
+        return f"Answer to {self.question_id}"
+
+
+class FinalRating(models.Model):
+    """
+    End-of-interview aggregate rating, generated by the Celery post-analysis
+    task once a session completes or terminates. Recruiter-only, never
+    exposed to the candidate.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    session = models.OneToOneField(
+        InterviewSession, on_delete=models.CASCADE, related_name="final_rating"
+    )
+
+    overall_score = models.FloatField()
+
+    # e.g. {"communication": 78, "technical_depth": 65, "relevance": 82}
+    category_scores = models.JSONField(default=dict, blank=True)
+
+    strengths = models.TextField(blank=True)
+    concerns = models.TextField(blank=True)
+
+    # True red flags surfaced by the LLM during analysis (not proctoring
+    # flags — those live on ProctoringFlag in the proctoring app).
+    content_flags = models.JSONField(default=list, blank=True)
+
+    recruiter_visible = models.BooleanField(default=True)
+    candidate_visible = models.BooleanField(default=False)
+
+    generated_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Final rating"
+        verbose_name_plural = "Final ratings"
+
+    def __str__(self):
+        return f"Rating for {self.session_id}: {self.overall_score}"

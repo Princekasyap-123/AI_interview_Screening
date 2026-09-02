@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Interview Room — White Force</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+
+<!-- MediaPipe Face Mesh — used by proctoring_client.js for no-face /
+     multiple-faces / gaze-away detection. -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<style>
+  :root {
+    --bg: #14161A;
+    --panel: #1B1E24;
+    --text: #F5F3EF;
+    --text-dim: #8A8F98;
+    --accent: #3B5F52;
+    --accent-bright: #5B8A76;
+    --warn: #C9432B;
+    --warn-bg: #2A1815;
+    --border: #2A2D34;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 32px;
+  }
+
+  .header {
+    width: 100%;
+    max-width: 920px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 4px 20px;
+  }
+
+  .brand {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--text);
+  }
+
+  .brand span {
+    color: var(--text-dim);
+    font-weight: 400;
+    margin-left: 8px;
+  }
+
+  .timer {
+    font-size: 13px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .stage {
+    width: 100%;
+    max-width: 920px;
+    display: grid;
+    grid-template-columns: 1.5fr 1fr;
+    gap: 12px;
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    position: relative;
+    overflow: hidden;
+    aspect-ratio: 4 / 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .panel-label {
+    position: absolute;
+    top: 12px;
+    left: 14px;
+    font-size: 12px;
+    color: var(--text-dim);
+    z-index: 2;
+  }
+
+  .ai-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+  }
+
+  .ai-mark {
+    width: 92px;
+    height: 92px;
+    border-radius: 50%;
+    background: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Source Serif 4', serif;
+    font-size: 34px;
+    font-weight: 500;
+    color: var(--text);
+    position: relative;
+    transition: box-shadow 0.3s ease;
+  }
+
+  .ai-mark::after {
+    content: '';
+    position: absolute;
+    inset: -8px;
+    border-radius: 50%;
+    border: 1px solid var(--accent-bright);
+    opacity: 0;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+  }
+
+  .panel.speaking .ai-mark::after {
+    opacity: 0.5;
+    animation: pulse-ring 1.6s ease-out infinite;
+  }
+
+  @keyframes pulse-ring {
+    0%   { transform: scale(1);   opacity: 0.5; }
+    100% { transform: scale(1.55); opacity: 0; }
+  }
+
+  .ai-caption {
+    font-family: 'Source Serif 4', serif;
+    font-size: 17px;
+    line-height: 1.5;
+    color: var(--text);
+    max-width: 380px;
+    text-align: center;
+    padding: 0 24px;
+  }
+
+  .cand-panel {
+    background: linear-gradient(160deg, #23262D, #1B1E24);
+  }
+
+  .cand-placeholder {
+    color: var(--text-dim);
+    font-size: 13px;
+    position: absolute;
+    z-index: 1;
+  }
+
+  .cand-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    position: relative;
+    z-index: 2;
+    transform: scaleX(-1);
+  }
+
+  .cand-video:not([data-ready="true"]) {
+    display: none;
+  }
+
+  .mic-dot {
+    position: absolute;
+    bottom: 14px;
+    left: 14px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .mic-dot .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .panel.listening .mic-dot .dot {
+    background: var(--accent-bright);
+    box-shadow: 0 0 0 3px rgba(91, 138, 118, 0.25);
+  }
+
+  .status-bar {
+    width: 100%;
+    max-width: 920px;
+    margin-top: 12px;
+    padding: 12px 16px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 13px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-dim);
+  }
+
+  .status-bar.active .status-dot { background: var(--accent-bright); }
+  .status-bar.active .status-text { color: var(--text); }
+
+  .controls {
+    width: 100%;
+    max-width: 920px;
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 22px;
+  }
+
+  button {
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 11px 22px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+
+  button:hover { border-color: var(--text-dim); }
+
+  .btn-end {
+    border-color: rgba(201, 67, 43, 0.4);
+    color: #E48B7A;
+  }
+
+  .btn-end:hover {
+    background: rgba(201, 67, 43, 0.08);
+    border-color: var(--warn);
+  }
+
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 11, 13, 0.82);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+    z-index: 10;
+    padding: 20px;
+  }
+
+  .overlay.show {
+    opacity: 1;
+    pointer-events: all;
+  }
+
+  .warning-card {
+    background: var(--panel);
+    border: 1px solid var(--warn);
+    border-radius: 6px;
+    max-width: 420px;
+    width: 100%;
+    padding: 28px 26px 24px;
+    text-align: left;
+  }
+
+  .warning-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: var(--warn-bg);
+    color: var(--warn);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 17px;
+    font-weight: 600;
+    margin-bottom: 16px;
+  }
+
+  .warning-card h2 {
+    font-family: 'Inter', sans-serif;
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+
+  .warning-card p {
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: var(--text-dim);
+    margin-bottom: 20px;
+  }
+
+  .warning-card p strong { color: var(--text); font-weight: 500; }
+
+  .warning-card button {
+    width: 100%;
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .warning-card button:hover { background: var(--accent-bright); border-color: var(--accent-bright); }
+
+  .terminated-card {
+    border-color: var(--warn);
+  }
+
+  .terminated-card .warning-icon {
+    background: var(--warn);
+    color: var(--text);
+  }
+
+  .terminated-card button {
+    background: transparent;
+    border-color: var(--border);
+    color: var(--text-dim);
+    cursor: default;
+  }
+
+  .terminated-card button:hover { background: transparent; border-color: var(--border); }
+
+  .fs-note {
+    max-width: 920px;
+    width: 100%;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 14px;
+  }
+
+  @media (max-width: 640px) {
+    .stage { grid-template-columns: 1fr; }
+    .cand-panel { aspect-ratio: 16 / 10; }
+  }
+</style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="brand">White Force<span>AI Interview</span></div>
+    <div class="timer" id="timer">00:00</div>
+  </div>
+
+  <div class="stage">
+    <div class="panel ai-panel" id="aiPanel">
+      <div class="panel-label">AI Interviewer</div>
+      <div class="ai-mark">WF</div>
+      <div class="ai-caption" id="aiCaption">Getting ready…</div>
+    </div>
+
+    <div class="panel cand-panel" id="candPanel">
+      <div class="panel-label">You</div>
+      <video id="candidateVideo" class="cand-video" autoplay playsinline></video>
+      <div class="cand-placeholder" id="candPlaceholder">Requesting camera…</div>
+      <div class="mic-dot"><div class="dot"></div><span id="micLabel">Muted</span></div>
+    </div>
+  </div>
+
+  <div class="status-bar" id="statusBar">
+    <div class="status-dot"></div>
+    <div class="status-text" id="statusText">Connecting…</div>
+  </div>
+
+  <div class="controls">
+    <button id="muteBtn">Mute mic</button>
+    <button class="btn-end" id="endBtn">End interview</button>
+  </div>
+
+  <div class="fs-note" id="fsNote">Waiting for camera and microphone access…</div>
+
+  <div class="overlay" id="warningOverlay">
+    <div class="warning-card">
+      <div class="warning-icon">!</div>
+      <h2>We noticed you left the interview screen</h2>
+      <p>For fairness to all candidates, this interview must stay in focus and fullscreen for its full duration. <strong>This is your only warning</strong> — if it happens again, the interview will end automatically.</p>
+      <button id="warningDismissBtn">Return to fullscreen and continue</button>
+    </div>
+  </div>
+
+  <div class="overlay" id="terminatedOverlay">
+    <div class="warning-card terminated-card">
+      <div class="warning-icon">✕</div>
+      <h2>This interview has ended</h2>
+      <p id="terminatedMessage">We detected repeated activity outside the interview screen after a warning was given, so the session was closed automatically to keep the process fair for everyone. This has been noted along with your responses so far. <strong>You do not need to take any further action</strong> — the recruiting team will follow up separately.</p>
+      <button disabled>Session closed</button>
+    </div>
+  </div>
+
+{% load static %}
+<script>
+  // Injected by the Django view rendering this template — must be a
+  // real InterviewSession UUID, e.g. InterviewRoomPageView passing
+  // {"session_id": session.id} into the template context.
+  const SESSION_ID = "{{ session_id }}";
+</script>
+
+<script src="{% static 'js/interview_socket.js' %}"></script>
+<script src="{% static 'js/webrtc_client.js' %}"></script>
+<script src="{% static 'js/stt_recorder.js' %}"></script>
+<script src="{% static 'js/proctoring_client.js' %}"></script>
+<script src="{% static 'js/tts_player.js' %}"></script>
+
+<script>
+// ---- DOM references ----
+const aiPanel = document.getElementById('aiPanel');
+const candPanel = document.getElementById('candPanel');
+const statusBar = document.getElementById('statusBar');
+const statusText = document.getElementById('statusText');
+const micLabel = document.getElementById('micLabel');
+const aiCaption = document.getElementById('aiCaption');
+const candidateVideo = document.getElementById('candidateVideo');
+const candPlaceholder = document.getElementById('candPlaceholder');
+const fsNote = document.getElementById('fsNote');
+const muteBtn = document.getElementById('muteBtn');
+const endBtn = document.getElementById('endBtn');
+const warningOverlay = document.getElementById('warningOverlay');
+const terminatedOverlay = document.getElementById('terminatedOverlay');
+const warningDismissBtn = document.getElementById('warningDismissBtn');
+
+function setUiState(state) {
+  aiPanel.classList.remove('speaking');
+  candPanel.classList.remove('listening');
+  statusBar.classList.remove('active');
+
+  if (state === 'speaking') {
+    aiPanel.classList.add('speaking');
+    statusBar.classList.add('active');
+    statusText.textContent = 'AI is speaking…';
+    micLabel.textContent = 'Muted';
+  } else if (state === 'listening') {
+    candPanel.classList.add('listening');
+    statusBar.classList.add('active');
+    statusText.textContent = 'Listening…';
+    micLabel.textContent = 'Live';
+  } else if (state === 'connecting') {
+    statusText.textContent = 'Connecting…';
+    micLabel.textContent = 'Muted';
+  } else if (state === 'ended') {
+    statusText.textContent = 'Interview ended';
+    micLabel.textContent = 'Muted';
+  }
+}
+
+function showWarning() {
+  warningOverlay.classList.add('show');
+}
+function showTerminated(message) {
+  warningOverlay.classList.remove('show');
+  if (message) {
+    document.getElementById('terminatedMessage').textContent = message;
+  }
+  terminatedOverlay.classList.add('show');
+  setUiState('ended');
+}
+
+let seconds = 0;
+let timerInterval = null;
+function startTimer() {
+  timerInterval = setInterval(() => {
+    seconds++;
+    const m = String(Math.floor(seconds / 60)).padStart(2, '0');
+    const s = String(seconds % 60).padStart(2, '0');
+    document.getElementById('timer').textContent = `${m}:${s}`;
+  }, 1000);
+}
+function stopTimer() {
+  if (timerInterval) clearInterval(timerInterval);
+}
+
+const webrtcClient = new WebRTCClient();
+const sttRecorder = new STTRecorder();
+const ttsPlayer = new TTSPlayer();
+const interviewSocket = new InterviewSocket(SESSION_ID);
+const proctoringClient = new ProctoringClient(SESSION_ID);
+
+let currentQuestionId = null;
+let micMuted = false;
+
+async function boot() {
+  try {
+    await webrtcClient.init(candidateVideo);
+    candidateVideo.dataset.ready = "true";
+    candPlaceholder.style.display = "none";
+
+    sttRecorder.init(webrtcClient.getStream());
+
+    proctoringClient.startFaceMesh(webrtcClient.getVideoElement());
+    proctoringClient.startBrowserEventDetection();
+
+    fsNote.textContent = "Click anywhere to enter fullscreen and begin.";
+    document.body.addEventListener('click', enterFullscreenAndConnect, { once: true });
+
+  } catch (err) {
+    console.error('[boot] failed to initialize camera/mic:', err);
+    candPlaceholder.textContent = err.message || 'Camera/microphone access failed.';
+    statusText.textContent = 'Unable to start — camera/mic required.';
+  }
+}
+
+async function enterFullscreenAndConnect() {
+  await ProctoringClient.requestFullscreen();
+  fsNote.textContent = '';
+  setUiState('connecting');
+  startTimer();
+
+  proctoringClient.connect();
+  interviewSocket.connect();
+}
+
+interviewSocket.on('turn', (turn) => {
+  console.log('[turn]', turn);
+
+  if (['speak_intro', 'speak_question', 'speak_follow_up'].includes(turn.action)) {
+    currentQuestionId = turn.question_id;
+    aiCaption.textContent = turn.text;
+    ttsPlayer.handleTurn(turn);
+  } else if (turn.action === 'close_interview') {
+    handleInterviewClose(turn.message);
+  } else if (turn.action === 'error') {
+    statusText.textContent = turn.message || 'Something went wrong.';
+  }
+});
+
+interviewSocket.on('info', (message) => {
+  statusText.textContent = message;
+});
+
+interviewSocket.on('error', (message) => {
+  console.error('[InterviewSocket error]', message);
+  statusText.textContent = message;
+});
+
+ttsPlayer.on('speakStart', () => {
+  setUiState('speaking');
+});
+
+ttsPlayer.on('speakEnd', () => {
+  if (!currentQuestionId || micMuted) return;
+  setUiState('listening');
+  sttRecorder.startRecording();
+});
+
+const MAX_ANSWER_DURATION_MS = 120000;
+let answerTimeout = null;
+
+function stopAndSubmitAnswer() {
+  if (!sttRecorder.isRecording || !currentQuestionId) return;
+  clearTimeout(answerTimeout);
+  sttRecorder.stopRecording(currentQuestionId, interviewSocket)
+    .then(() => {
+      statusText.textContent = 'Answer submitted, thinking…';
+      statusBar.classList.remove('active');
+      candPanel.classList.remove('listening');
+    })
+    .catch((err) => {
+      console.error('[stopAndSubmitAnswer] failed:', err);
+      statusText.textContent = 'Failed to submit answer — please try again.';
+    });
+}
+
+const originalStartRecording = sttRecorder.startRecording.bind(sttRecorder);
+sttRecorder.startRecording = function () {
+  originalStartRecording();
+  answerTimeout = setTimeout(stopAndSubmitAnswer, MAX_ANSWER_DURATION_MS);
+};
+
+proctoringClient.on('warning', () => {
+  showWarning();
+});
+
+proctoringClient.on('terminated', (message) => {
+  showTerminated(message);
+  cleanupAllMedia();
+});
+
+warningDismissBtn.addEventListener('click', async () => {
+  warningOverlay.classList.remove('show');
+  await ProctoringClient.requestFullscreen();
+});
+
+muteBtn.addEventListener('click', () => {
+  micMuted = !micMuted;
+  webrtcClient.toggleMic(!micMuted);
+  muteBtn.textContent = micMuted ? 'Unmute mic' : 'Mute mic';
+  if (micMuted && sttRecorder.isRecording) {
+    stopAndSubmitAnswer();
+  }
+});
+
+endBtn.addEventListener('click', () => {
+  if (confirm('End the interview now? This cannot be undone.')) {
+    interviewSocket.disconnect();
+    proctoringClient.disconnect();
+    cleanupAllMedia();
+    setUiState('ended');
+    statusText.textContent = 'Interview ended by candidate.';
+    stopTimer();
+  }
+});
+
+function handleInterviewClose(message) {
+  aiCaption.textContent = message;
+  statusText.textContent = 'Interview complete.';
+  setUiState('ended');
+  stopTimer();
+  cleanupAllMedia();
+  ttsPlayer.speak(message);
+}
+
+function cleanupAllMedia() {
+  clearTimeout(answerTimeout);
+  if (sttRecorder.isRecording) {
+    sttRecorder.mediaRecorder && sttRecorder.mediaRecorder.stop();
+  }
+  sttRecorder.release();
+  webrtcClient.release();
+  ttsPlayer.stop();
+}
+
+window.addEventListener('beforeunload', cleanupAllMedia);
+
+boot();
+</script>
+
+</body>
+</html>
