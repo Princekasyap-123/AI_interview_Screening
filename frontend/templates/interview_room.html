@@ -1,3 +1,4 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -254,6 +255,15 @@
     border-color: var(--warn);
   }
 
+  #doneAnsweringBtn {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  #doneAnsweringBtn:hover {
+    background: var(--accent-bright);
+    border-color: var(--accent-bright);
+  }
+
   .overlay {
     position: fixed;
     inset: 0;
@@ -382,6 +392,7 @@
   </div>
 
   <div class="controls">
+    <button id="doneAnsweringBtn" style="display:none;">I'm done answering</button>
     <button id="muteBtn">Mute mic</button>
     <button class="btn-end" id="endBtn">End interview</button>
   </div>
@@ -406,11 +417,7 @@
     </div>
   </div>
 
-{% load static %}
 <script>
-  // Injected by the Django view rendering this template — must be a
-  // real InterviewSession UUID, e.g. InterviewRoomPageView passing
-  // {"session_id": session.id} into the template context.
   const SESSION_ID = "{{ session_id }}";
 </script>
 
@@ -421,7 +428,6 @@
 <script src="{% static 'js/tts_player.js' %}"></script>
 
 <script>
-// ---- DOM references ----
 const aiPanel = document.getElementById('aiPanel');
 const candPanel = document.getElementById('candPanel');
 const statusBar = document.getElementById('statusBar');
@@ -433,6 +439,7 @@ const candPlaceholder = document.getElementById('candPlaceholder');
 const fsNote = document.getElementById('fsNote');
 const muteBtn = document.getElementById('muteBtn');
 const endBtn = document.getElementById('endBtn');
+const doneAnsweringBtn = document.getElementById('doneAnsweringBtn');
 const warningOverlay = document.getElementById('warningOverlay');
 const terminatedOverlay = document.getElementById('terminatedOverlay');
 const warningDismissBtn = document.getElementById('warningDismissBtn');
@@ -495,6 +502,7 @@ const proctoringClient = new ProctoringClient(SESSION_ID);
 
 let currentQuestionId = null;
 let micMuted = false;
+let isCompanyIntro = false;
 
 async function boot() {
   try {
@@ -530,7 +538,13 @@ async function enterFullscreenAndConnect() {
 interviewSocket.on('turn', (turn) => {
   console.log('[turn]', turn);
 
-  if (['speak_intro', 'speak_question', 'speak_follow_up'].includes(turn.action)) {
+  if (turn.action === 'speak_company_intro') {
+    // No question_id, no "done answering" button — candidate just
+    // listens, then the frontend auto-advances once TTS finishes.
+    aiCaption.textContent = turn.text;
+    ttsPlayer.speak(turn.text);
+    isCompanyIntro = true;
+  } else if (['speak_intro', 'speak_question', 'speak_follow_up'].includes(turn.action)) {
     currentQuestionId = turn.question_id;
     aiCaption.textContent = turn.text;
     ttsPlayer.handleTurn(turn);
@@ -555,9 +569,15 @@ ttsPlayer.on('speakStart', () => {
 });
 
 ttsPlayer.on('speakEnd', () => {
+  if (isCompanyIntro) {
+    isCompanyIntro = false;
+    interviewSocket._send({ type: 'ready_for_question' });
+    return;
+  }
   if (!currentQuestionId || micMuted) return;
   setUiState('listening');
   sttRecorder.startRecording();
+  doneAnsweringBtn.style.display = 'inline-block';
 });
 
 const MAX_ANSWER_DURATION_MS = 120000;
@@ -566,6 +586,7 @@ let answerTimeout = null;
 function stopAndSubmitAnswer() {
   if (!sttRecorder.isRecording || !currentQuestionId) return;
   clearTimeout(answerTimeout);
+  doneAnsweringBtn.style.display = 'none';
   sttRecorder.stopRecording(currentQuestionId, interviewSocket)
     .then(() => {
       statusText.textContent = 'Answer submitted, thinking…';
@@ -577,6 +598,8 @@ function stopAndSubmitAnswer() {
       statusText.textContent = 'Failed to submit answer — please try again.';
     });
 }
+
+doneAnsweringBtn.addEventListener('click', stopAndSubmitAnswer);
 
 const originalStartRecording = sttRecorder.startRecording.bind(sttRecorder);
 sttRecorder.startRecording = function () {
@@ -602,9 +625,6 @@ muteBtn.addEventListener('click', () => {
   micMuted = !micMuted;
   webrtcClient.toggleMic(!micMuted);
   muteBtn.textContent = micMuted ? 'Unmute mic' : 'Mute mic';
-  if (micMuted && sttRecorder.isRecording) {
-    stopAndSubmitAnswer();
-  }
 });
 
 endBtn.addEventListener('click', () => {

@@ -13,6 +13,7 @@ from apps.candidates.serializers import (
     CandidateCreateSerializer,
     CandidateSerializer,
 )
+from apps.candidates.tasks import submit_and_parse_resume
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +41,14 @@ class CandidateCreateView(APIView):
 
         logger.info("Created candidate %s (%s)", candidate.id, candidate.email)
 
-        # Resume parsing is NOT triggered here yet — this endpoint only
-        # creates the Candidate row and stores the uploaded file. Parsing
-        # into a ResumeProfile is a separate step (Celery task, reusing
-        # your existing bulkresume extraction logic) not yet wired in.
-        # See wiring note below.
+        # Trigger resume parsing automatically if a file was uploaded.
+        # This is the fix for candidates created via this REST endpoint
+        # specifically — candidates created via Django admin are covered
+        # separately by the post_save signal in apps/candidates/signals.py,
+        # since admin never touches this view at all.
+        if candidate.resume_file:
+            submit_and_parse_resume.delay(str(candidate.id))
+            logger.info("Triggered resume parsing for candidate %s via API", candidate.id)
 
         return Response(
             CandidateSerializer(candidate).data,

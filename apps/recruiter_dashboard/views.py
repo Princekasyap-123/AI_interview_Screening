@@ -1,5 +1,6 @@
-# apps/recruiter_dashboard/views.py
+# apps/recruiter_dashboard/views.py — merged version, keep this
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.decorators import method_decorator
@@ -13,21 +14,10 @@ from apps.interviews.models import InterviewSession
 class DashboardView(View):
     """
     Recruiter-facing session list + detail page. Requires Django login
-    (login_required) — this is internal tooling, never candidate-facing,
-    consistent with IsAuthenticated on the equivalent REST endpoints in
-    interviews/views.py.
-
-    Renders both the list (left panel) and, if session_id is provided
-    via query param, the detail panel (right side) — single-page rather
-    than a separate detail route, so a recruiter can click through
-    several candidates without a full page reload each time (detail
-    panel could later be swapped for an AJAX/HTMX partial without
-    changing this view's data shape).
+    (login_required) — internal tooling, never candidate-facing.
 
     Also handles POST for creating a new InterviewSession directly from
-    the dashboard (candidate + JD text + max_questions form) — plain
-    Django form POST with CSRF, not routed through the DRF API, since
-    this view is already session-authenticated via login_required.
+    the dashboard (candidate + JD text + max_questions form).
     """
 
     def get(self, request):
@@ -67,10 +57,35 @@ class DashboardView(View):
         )
 
     def post(self, request):
-        candidate = get_object_or_404(Candidate, id=request.POST.get("candidate_id"))
+        candidate_id = request.POST.get("candidate_id")
+        job_description_text = request.POST.get("job_description_text", "").strip()
+        max_questions_raw = request.POST.get("max_questions", "5")
+
+        if not candidate_id:
+            messages.error(request, "Please select a candidate.")
+            return redirect("recruiter_dashboard:index")
+
+        if not job_description_text:
+            messages.error(request, "Job description cannot be empty.")
+            return redirect("recruiter_dashboard:index")
+
+        candidate = Candidate.objects.filter(id=candidate_id).first()
+        if candidate is None:
+            messages.error(request, "Selected candidate no longer exists.")
+            return redirect("recruiter_dashboard:index")
+
+        try:
+            max_questions = int(max_questions_raw)
+            if max_questions < 1:
+                raise ValueError
+        except (TypeError, ValueError):
+            max_questions = 5
+
         session = InterviewSession.objects.create(
             candidate=candidate,
-            job_description_text=request.POST.get("job_description_text", ""),
-            max_questions=int(request.POST.get("max_questions") or 5),
+            job_description_text=job_description_text,
+            max_questions=max_questions,
         )
+
+        messages.success(request, f"Interview session created for {candidate.name}.")
         return redirect(f"/dashboard/?session_id={session.id}")

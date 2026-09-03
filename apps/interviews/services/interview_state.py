@@ -1,10 +1,9 @@
-# apps/interviews/services/interview_state.py
+# apps/interviews/services/interview_state.py — FULL UPDATED FILE
 
 import logging
 from enum import Enum
 
 from django.utils import timezone
-from apps.interviews.tasks import generate_final_rating
 
 from apps.interviews.models import Answer, InterviewSession, Question
 from apps.interviews.services.answer_analyzer import analyze_answer
@@ -15,18 +14,24 @@ from apps.interviews.services.question_generator import (
 
 logger = logging.getLogger(__name__)
 
-# Cap on follow-ups per question so a vague answer can't loop forever.
-# One follow-up is enough to mimic a real interviewer probing once,
-# without turning the session into an interrogation on a single topic.
 MAX_FOLLOW_UPS_PER_QUESTION = 1
+
+# Fixed company intro copy — not LLM-generated, not stored as a Question
+# row (candidate doesn't "answer" this, it's not scored). Edit this
+# string directly to change the wording; no migration needed since it's
+# not persisted anywhere.
+COMPANY_INTRO_TEXT = (
+    "Hi, and welcome. I'm the AI interviewer from White Force. Before we "
+    "begin, a quick word about what happens today: I'll ask you a series "
+    "of questions based on your background and the role you've applied "
+    "for. Just answer naturally, in your own words — there's no need to "
+    "overthink it. This isn't a live-graded test; everything is reviewed "
+    "afterward by our recruiting team. Let's get started."
+)
 
 
 class TurnAction(str, Enum):
-    """
-    What the consumer should do next, returned by advance(). The consumer
-    is dumb on purpose — it just renders/speaks whatever this FSM tells
-    it to, it never decides interview logic itself.
-    """
+    SPEAK_COMPANY_INTRO = "speak_company_intro"
     SPEAK_INTRO = "speak_intro"
     SPEAK_QUESTION = "speak_question"
     SPEAK_FOLLOW_UP = "speak_follow_up"
@@ -37,13 +42,15 @@ class TurnAction(str, Enum):
 
 class InterviewFSM:
     """
-    Drives one InterviewSession through: intro -> question loop
-    (with optional single follow-up per question) -> silent close.
+    Drives one InterviewSession through:
+      company intro (fixed, not scored)
+      -> candidate self-intro request (question #1, "intro" tag)
+      -> question loop (with optional single follow-up per question)
+      -> silent close.
 
-    This class holds no long-lived state itself — session state lives in
-    the DB (InterviewSession.questions_asked_count, Question rows,
-    Answer rows) so it survives websocket reconnects. Each call to a
-    method re-derives "where are we" from the DB.
+    Every spoken question/follow-up has the candidate's first name
+    prefixed at speak-time (not stored in the DB) so it doesn't read as
+    a generic script — see _personalize().
     """
 
     def __init__(self, session: InterviewSession, candidate_profile: dict):
@@ -51,14 +58,12 @@ class InterviewFSM:
         self.candidate_profile = candidate_profile
 
     # ------------------------------------------------------------------
-    # Entry point: start the interview
+    # Entry point: start the interview — now returns the company intro
+    # FIRST, not the first question. The candidate's question set is
+    # still generated here so it's ready by the time we need it.
     # ------------------------------------------------------------------
 
     def start(self) -> dict:
-        """
-        Call once when the candidate joins and the session should begin.
-        Generates the question set and returns the intro turn.
-        """
         if self.session.status != InterviewSession.Status.PENDING:
             logger.warning(
                 "start() called on session %s with status %s — ignoring.",
@@ -70,9 +75,7 @@ class InterviewFSM:
         try:
             generate_questions_for_session(self.session)
         except QuestionGenerationError as exc:
-            logger.error(
-                "Failed to start session %s: %s", self.session.id, exc
-            )
+            logger.error("Failed to start session %s: %s", self.session.id, exc)
             return {
                 "action": TurnAction.ERROR,
                 "message": (
@@ -85,7 +88,34 @@ class InterviewFSM:
         self.session.started_at = timezone.now()
         self.session.save(update_fields=["status", "started_at"])
 
+        return {
+            "action": TurnAction.SPEAK_COMPANY_INTRO,
+            "text": COMPANY_INTRO_TEXT,
+        }
+
+    def advance_to_first_question(self) -> dict:
+        """
+        Called after the frontend confirms the company intro finished
+        speaking (a new "ready_for_question" message, not tied to any
+        question_id since the intro isn't a Question row). Speaks the
+        candidate's self-intro request — question order=1, tag "intro".
+        """
+        if self.session.status != InterviewSession.Status.IN_PROGRESS:
+            logger.warning(
+                "advance_to_first_question called on session %s with "
+                "status %s — ignoring.",
+                self.session.id,
+                self.session.status,
+            )
+            return self._current_turn()
+
         intro_question = self._get_question_by_order(1)
+        if intro_question is None:
+            return {
+                "action": TurnAction.ERROR,
+                "message": "No questions were generated for this session.",
+            }
+
         return self._speak_question_turn(intro_question, is_intro=True)
 
     # ------------------------------------------------------------------
@@ -93,13 +123,6 @@ class InterviewFSM:
     # ------------------------------------------------------------------
 
     def submit_answer(self, question_id, transcript_text: str, audio_ref: str = "") -> dict:
-        """
-        Records + analyzes the candidate's answer to `question_id`, then
-        decides the next turn: follow-up, next question, or close.
-
-        This is the core of steps 3-7: analyse the answer, silently
-        decide what happens next, never reveal scoring to the candidate.
-        """
         if not self.session.is_active:
             logger.warning(
                 "submit_answer called on inactive session %s (status=%s)",
@@ -123,62 +146,10 @@ class InterviewFSM:
         )
 
         if question.asked_at is None:
-            # First time this question was answered (not a follow-up
-            # re-analysis) — count it toward the session's question budget.
             self.session.questions_asked_count += 1
             self.session.save(update_fields=["questions_asked_count"])
 
         return self._decide_next_turn(question, answer)
-
-    # ------------------------------------------------------------------
-    # Called by the proctoring app on a terminating violation
-    # ------------------------------------------------------------------
-
-    def terminate_for_violation(self, explanation: str) -> dict:
-        """
-        Public entry point for the proctoring app to force-close an
-        active session after a repeated violation (step 11/12: second
-        tab-switch/fullscreen-exit after a warning).
-
-        Unlike a normal completion, this always returns a CLOSE_INTERVIEW
-        turn with the candidate-facing explanation attached — the
-        consumer must speak/display `message` verbatim so the candidate
-        understands why the session ended, per the agreed UX (warning on
-        1st violation, explained termination on 2nd).
-
-        Safe to call even if the session isn't IN_PROGRESS (e.g. a race
-        between two flag events) — it's idempotent and just returns the
-        current close turn if already terminated.
-        """
-        if self.session.status == InterviewSession.Status.TERMINATED:
-            logger.info(
-                "terminate_for_violation called on already-terminated "
-                "session %s — returning existing close turn.",
-                self.session.id,
-            )
-            return {
-                "action": TurnAction.CLOSE_INTERVIEW,
-                "message": self.session.termination_note or explanation,
-            }
-
-        if not self.session.is_active:
-            logger.warning(
-                "terminate_for_violation called on session %s with "
-                "status=%s (not in_progress) — terminating anyway.",
-                self.session.id,
-                self.session.status,
-            )
-
-        logger.info(
-            "Terminating session %s for proctoring violation.",
-            self.session.id,
-        )
-
-        return self._close_session(
-            reason=InterviewSession.TerminationReason.PROCTORING_VIOLATION,
-            status=InterviewSession.Status.TERMINATED,
-            note=explanation,
-        )
 
     # ------------------------------------------------------------------
     # Core decision logic
@@ -208,9 +179,6 @@ class InterviewFSM:
         next_question = self._get_question_by_order(next_order)
 
         if next_question is None:
-            # We've run out of generated questions before hitting
-            # max_questions (e.g. LLM returned fewer than requested).
-            # Close gracefully rather than erroring out on the candidate.
             logger.warning(
                 "Session %s ran out of questions at order %d (max_questions=%d)",
                 self.session.id,
@@ -235,7 +203,7 @@ class InterviewFSM:
         return {
             "action": TurnAction.SPEAK_INTRO if is_intro else TurnAction.SPEAK_QUESTION,
             "question_id": str(question.id),
-            "text": question.text,
+            "text": self._personalize(question.text),
         }
 
     def _speak_follow_up_turn(self, question: Question, answer: Answer) -> dict:
@@ -248,22 +216,33 @@ class InterviewFSM:
         return {
             "action": TurnAction.SPEAK_FOLLOW_UP,
             "question_id": str(question.id),
-            "text": follow_up_text,
+            "text": self._personalize(follow_up_text),
         }
 
     def _build_follow_up_text(self, question: Question, answer: Answer) -> str:
-        """
-        Simple templated follow-up for now — asks the candidate to expand,
-        using the reason the analyzer flagged. Keeping this templated
-        rather than another LLM call keeps latency low for the most
-        time-sensitive moment in the loop (candidate is waiting live).
-        A future version could route this through llm_client.generate_fast
-        for a more natural, context-specific follow-up if latency allows.
-        """
         reason = answer.analysis_json.get("follow_up_reason", "").strip()
         if reason:
             return f"Could you expand on that a bit? {reason}"
         return "Could you say a bit more about that?"
+
+    def _personalize(self, text: str) -> str:
+        """
+        Prefixes the candidate's first name onto spoken text, e.g.
+        "Priya, tell me about..." — applied only at speak-time, never
+        stored on the Question row itself, so the underlying generated
+        text stays reusable/clean in the DB and this stays a pure
+        presentation concern.
+        """
+        first_name = self._get_first_name()
+        if not first_name:
+            return text
+        return f"{first_name}, {text[0].lower()}{text[1:]}" if text else text
+
+    def _get_first_name(self) -> str:
+        full_name = self.candidate_profile.get("name", "").strip()
+        if not full_name:
+            return ""
+        return full_name.split()[0]
 
     def _close_session(self, reason: str, status: str, note: str = "") -> dict:
         self.session.status = status
@@ -286,6 +265,7 @@ class InterviewFSM:
             reason,
         )
 
+        from apps.interviews.tasks import generate_final_rating
         generate_final_rating.delay(str(self.session.id))
 
         default_message = (
@@ -293,13 +273,42 @@ class InterviewFSM:
             "— our team will follow up with you separately."
         )
 
-        # Step 6/7: no result is disclosed here. The consumer must not
-        # attach any score/analysis to this response — it's structurally
-        # absent from this dict on purpose.
         return {
             "action": TurnAction.CLOSE_INTERVIEW,
             "message": note or default_message,
         }
+
+    # ------------------------------------------------------------------
+    # Called by the proctoring app on a terminating violation
+    # ------------------------------------------------------------------
+
+    def terminate_for_violation(self, explanation: str) -> dict:
+        if self.session.status == InterviewSession.Status.TERMINATED:
+            logger.info(
+                "terminate_for_violation called on already-terminated "
+                "session %s — returning existing close turn.",
+                self.session.id,
+            )
+            return {
+                "action": TurnAction.CLOSE_INTERVIEW,
+                "message": self.session.termination_note or explanation,
+            }
+
+        if not self.session.is_active:
+            logger.warning(
+                "terminate_for_violation called on session %s with "
+                "status=%s (not in_progress) — terminating anyway.",
+                self.session.id,
+                self.session.status,
+            )
+
+        logger.info("Terminating session %s for proctoring violation.", self.session.id)
+
+        return self._close_session(
+            reason=InterviewSession.TerminationReason.PROCTORING_VIOLATION,
+            status=InterviewSession.Status.TERMINATED,
+            note=explanation,
+        )
 
     # ------------------------------------------------------------------
     # Helpers
@@ -312,10 +321,7 @@ class InterviewFSM:
         return self.session.questions.filter(order=order).first()
 
     def _current_turn(self) -> dict:
-        """Fallback used when start()/submit_answer() are called out of
-        sequence — reports current status rather than guessing a turn."""
         return {
             "action": TurnAction.ERROR,
             "message": f"Session is in state '{self.session.status}', no turn to advance.",
         }
-

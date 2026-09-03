@@ -53,7 +53,10 @@ class InterviewSocket {
       }
     }
   }
-
+  // Add to InterviewSocket class in interview_socket.js
+sendReadyForQuestion() {
+  this._send({ type: "ready_for_question" });
+  }
   // ------------------------------------------------------------------
   // Connection lifecycle
   // ------------------------------------------------------------------
@@ -152,3 +155,4 @@ class InterviewSocket {
 // non-bundled <script> tag setup implied by the current static/js/
 // folder structure (no build step configured yet).
 window.InterviewSocket = InterviewSocket;
+

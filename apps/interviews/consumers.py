@@ -292,3 +292,42 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
             .get(id=self.session_id)
     )
         return self.session
+
+    # Add this new handler method to InterviewConsumer, and register it in receive_json
+
+    async def receive_json(self, content, **kwargs):
+        msg_type = content.get("type")
+
+        try:
+            if msg_type == "join":
+                await self._handle_join()
+            elif msg_type == "ready_for_question":
+                await self._handle_ready_for_question()
+            elif msg_type == "answer_submitted":
+                await self._handle_answer_submitted(content)
+            else:
+                await self.send_json({
+                    "type": "error",
+                    "message": f"Unrecognized message type: {msg_type}",
+                })
+        except Exception as exc:
+            logger.error(
+                "Unhandled error processing message type=%s for session %s: %s",
+                msg_type, self.session_id, exc, exc_info=True,
+            )
+            await self.send_json({
+                "type": "error",
+                "message": "Something went wrong. Please try again.",
+            })
+
+    async def _handle_ready_for_question(self):
+        """
+        Sent by the frontend once the company intro has finished being
+        spoken (TTS speakEnd). Advances the FSM to the candidate's
+        self-intro request — the actual first Question row.
+        """
+        session = await self._refresh_session()
+        fsm = await self._build_fsm(session)
+
+        turn = await database_sync_to_async(fsm.advance_to_first_question)()
+        await self._send_turn(turn)
