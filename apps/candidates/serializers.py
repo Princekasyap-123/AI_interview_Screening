@@ -43,20 +43,24 @@ class CandidateSerializer(serializers.ModelSerializer):
             "phone",
             "resume_file",
             "applied_role",
+            "parsing_status",
             "resume_profile",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = ["id", "parsing_status", "created_at", "updated_at"]
 
 
 class CandidateCreateSerializer(serializers.ModelSerializer):
     """
     Used for the intake endpoint: create a Candidate + upload a resume
     file in one request. Does NOT create ResumeProfile — parsing happens
-    asynchronously (Celery task, not yet written) after upload, since
-    your existing bulkresume app pattern is async/Celery-based and
-    resume parsing shouldn't block the HTTP response.
+    asynchronously via the post_save signal (apps/candidates/signals.py)
+    -> submit_and_parse_resume Celery task, since resume parsing
+    shouldn't block the HTTP response. parsing_status is deliberately
+    NOT writable here (see read_only_fields on CandidateSerializer) —
+    it's only ever set by the signal/task pipeline via queryset
+    .update() calls, never by client input.
     """
 
     class Meta:

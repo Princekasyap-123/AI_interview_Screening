@@ -16,10 +16,8 @@ logger = logging.getLogger(__name__)
 
 MAX_FOLLOW_UPS_PER_QUESTION = 1
 
-# Fixed company intro copy — not LLM-generated, not stored as a Question
-# row (candidate doesn't "answer" this, it's not scored). Edit this
-# string directly to change the wording; no migration needed since it's
-# not persisted anywhere.
+MAX_ADVANCE_ATTEMPTS = 25
+
 COMPANY_INTRO_TEXT = (
     "Hi, and welcome. I'm the AI interviewer from White Force. Before we "
     "begin, a quick word about what happens today: I'll ask you a series "
@@ -46,11 +44,18 @@ class InterviewFSM:
       company intro (fixed, not scored)
       -> candidate self-intro request (question #1, "intro" tag)
       -> question loop (with optional single follow-up per question)
-      -> silent close.
+      -> silent close (natural completion, proctoring termination, or
+         candidate-initiated early end).
 
     Every spoken question/follow-up has the candidate's first name
     prefixed at speak-time (not stored in the DB) so it doesn't read as
     a generic script — see _personalize().
+
+    IMPORTANT — question progression is driven by whether an Answer
+    exists for a question, NOT by Question.asked_at. asked_at is set
+    the moment a question is *spoken*, which always happens before any
+    answer comes in — so it can never be used to detect "has this
+    question been answered yet". See submit_answer().
     """
 
     def __init__(self, session: InterviewSession, candidate_profile: dict):
@@ -58,9 +63,7 @@ class InterviewFSM:
         self.candidate_profile = candidate_profile
 
     # ------------------------------------------------------------------
-    # Entry point: start the interview — now returns the company intro
-    # FIRST, not the first question. The candidate's question set is
-    # still generated here so it's ready by the time we need it.
+    # Entry point: start the interview
     # ------------------------------------------------------------------
 
     def start(self) -> dict:
@@ -94,12 +97,6 @@ class InterviewFSM:
         }
 
     def advance_to_first_question(self) -> dict:
-        """
-        Called after the frontend confirms the company intro finished
-        speaking (a new "ready_for_question" message, not tied to any
-        question_id since the intro isn't a Question row). Speaks the
-        candidate's self-intro request — question order=1, tag "intro".
-        """
         if self.session.status != InterviewSession.Status.IN_PROGRESS:
             logger.warning(
                 "advance_to_first_question called on session %s with "
@@ -115,6 +112,16 @@ class InterviewFSM:
                 "action": TurnAction.ERROR,
                 "message": "No questions were generated for this session.",
             }
+
+        if intro_question.asked_at is not None:
+            logger.warning(
+                "advance_to_first_question called again for session %s "
+                "but question order=1 was already spoken at %s — "
+                "ignoring duplicate call.",
+                self.session.id,
+                intro_question.asked_at,
+            )
+            return self._current_turn()
 
         return self._speak_question_turn(intro_question, is_intro=True)
 
@@ -138,6 +145,8 @@ class InterviewFSM:
                 "message": "Unrecognized question — please rejoin the interview.",
             }
 
+        is_first_answer_to_question = not question.has_answer
+
         answer = analyze_answer(
             question=question,
             transcript_text=transcript_text,
@@ -145,11 +154,70 @@ class InterviewFSM:
             audio_ref=audio_ref,
         )
 
-        if question.asked_at is None:
+        if is_first_answer_to_question:
             self.session.questions_asked_count += 1
             self.session.save(update_fields=["questions_asked_count"])
+            logger.info(
+                "Session %s: first answer recorded for question order=%d "
+                "(id=%s) — questions_asked_count now %d.",
+                self.session.id,
+                question.order,
+                question.id,
+                self.session.questions_asked_count,
+            )
+        else:
+            logger.info(
+                "Session %s: follow-up answer recorded for question "
+                "order=%d (id=%s) — questions_asked_count unchanged (%d).",
+                self.session.id,
+                question.order,
+                question.id,
+                self.session.questions_asked_count,
+            )
 
         return self._decide_next_turn(question, answer)
+
+    # ------------------------------------------------------------------
+    # Called by the consumer when the candidate clicks "End interview"
+    # ------------------------------------------------------------------
+
+    def end_interview_by_candidate(self) -> dict:
+        """
+        Candidate explicitly ended the interview early. Closes the
+        session with whatever was answered so far and still triggers
+        final rating generation on the partial transcript.
+
+        Distinct from terminate_for_violation: reason is
+        CANDIDATE_ENDED, not PROCTORING_VIOLATION — the dashboard should
+        treat these very differently (this is not a red flag on the
+        candidate).
+        """
+        if self.session.status in (
+            InterviewSession.Status.COMPLETED,
+            InterviewSession.Status.TERMINATED,
+        ):
+            logger.info(
+                "end_interview_by_candidate called on session %s already "
+                "in terminal status=%s — returning existing close turn.",
+                self.session.id,
+                self.session.status,
+            )
+            return {
+                "action": TurnAction.CLOSE_INTERVIEW,
+                "message": self.session.termination_note or "This interview has already ended.",
+            }
+
+        logger.info("Session %s ended early by candidate.", self.session.id)
+
+        return self._close_session(
+            reason=InterviewSession.TerminationReason.CANDIDATE_ENDED,
+            status=InterviewSession.Status.TERMINATED,
+            note=(
+                "You ended the interview early. Thank you for your time "
+                "— our team will review your responses so far and follow "
+                "up separately."
+            ),
+        )
 
     # ------------------------------------------------------------------
     # Core decision logic
@@ -176,21 +244,59 @@ class InterviewFSM:
             )
 
         next_order = self.session.questions_asked_count + 1
-        next_question = self._get_question_by_order(next_order)
+        attempts = 0
 
-        if next_question is None:
-            logger.warning(
-                "Session %s ran out of questions at order %d (max_questions=%d)",
+        while attempts < MAX_ADVANCE_ATTEMPTS:
+            next_question = self._get_question_by_order(next_order)
+
+            if next_question is None:
+                logger.warning(
+                    "Session %s ran out of questions at order %d "
+                    "(max_questions=%d) — closing.",
+                    self.session.id,
+                    next_order,
+                    self.session.max_questions,
+                )
+                return self._close_session(
+                    reason=InterviewSession.TerminationReason.NONE,
+                    status=InterviewSession.Status.COMPLETED,
+                )
+
+            if next_question.asked_at is None:
+                return self._speak_question_turn(next_question, is_intro=False)
+
+            logger.error(
+                "Session %s: question order=%d (id=%s) was already "
+                "asked at %s but was about to be re-served — this "
+                "indicates a stale questions_asked_count or a "
+                "duplicate-order Question row. Skipping to order=%d "
+                "instead of repeating it.",
                 self.session.id,
-                next_order,
-                self.session.max_questions,
+                next_question.order,
+                next_question.id,
+                next_question.asked_at,
+                next_order + 1,
             )
-            return self._close_session(
-                reason=InterviewSession.TerminationReason.NONE,
-                status=InterviewSession.Status.COMPLETED,
-            )
+            next_order += 1
+            attempts += 1
 
-        return self._speak_question_turn(next_question, is_intro=False)
+        logger.error(
+            "Session %s: hit MAX_ADVANCE_ATTEMPTS (%d) while looking for "
+            "an unasked question starting from order=%d — closing session "
+            "to avoid an infinite/looping interview instead of guessing "
+            "further.",
+            self.session.id,
+            MAX_ADVANCE_ATTEMPTS,
+            self.session.questions_asked_count + 1,
+        )
+        return self._close_session(
+            reason=InterviewSession.TerminationReason.NONE,
+            status=InterviewSession.Status.COMPLETED,
+            note=(
+                "That's the end of the interview. Thank you for your "
+                "time — our team will follow up with you separately."
+            ),
+        )
 
     # ------------------------------------------------------------------
     # Turn builders
@@ -226,13 +332,6 @@ class InterviewFSM:
         return "Could you say a bit more about that?"
 
     def _personalize(self, text: str) -> str:
-        """
-        Prefixes the candidate's first name onto spoken text, e.g.
-        "Priya, tell me about..." — applied only at speak-time, never
-        stored on the Question row itself, so the underlying generated
-        text stays reusable/clean in the DB and this stays a pure
-        presentation concern.
-        """
         first_name = self._get_first_name()
         if not first_name:
             return text

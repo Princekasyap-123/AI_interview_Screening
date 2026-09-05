@@ -16,14 +16,8 @@ from apps.interviews.services.interview_state import InterviewFSM, TurnAction
 
 logger = logging.getLogger(__name__)
 
-# Where raw candidate audio chunks are temporarily saved before STT,
-# then discarded. Keeping this separate from MEDIA_ROOT since these are
-# transient working files, not permanent candidate-facing media.
 AUDIO_SCRATCH_DIR = os.path.join(settings.MEDIA_ROOT, "interview_audio_scratch")
 
-# Cap on incoming base64 audio payload size (in decoded bytes) to avoid
-# a malformed/malicious client flooding the server with a huge blob
-# over the WebSocket. ~15MB is generous for a single spoken answer.
 MAX_AUDIO_BYTES = 15 * 1024 * 1024
 
 
@@ -33,15 +27,18 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
     connection. This consumer is intentionally "dumb" about interview
     logic — every decision comes from InterviewFSM; this class only:
       - authenticates the connection to a session
-      - relays candidate messages (join, answer_submitted with raw audio,
-        proctoring-triggered close via group_send) into FSM calls
+      - relays candidate messages (join, ready_for_question,
+        answer_submitted, end_interview, proctoring-triggered close via
+        group_send) into FSM calls
       - runs STT on submitted audio before handing transcript text to
         the FSM
       - relays FSM turn dicts back out to the frontend as JSON
 
     Expected incoming message shapes (from interview_socket.js):
       {"type": "join"}
+      {"type": "ready_for_question"}
       {"type": "answer_submitted", "question_id": "...", "audio_base64": "...", "audio_format": "webm"}
+      {"type": "end_interview"}
 
     Outgoing message shapes (consumed by tts_player.js / proctoring_client.js):
       {"type": "turn", "action": "speak_question", "question_id": "...", "text": "..."}
@@ -71,6 +68,11 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
 
         os.makedirs(AUDIO_SCRATCH_DIR, exist_ok=True)
 
+        # Guards against duplicate 'join' messages on the same connection
+        # calling fsm.start() twice before session.status flips to
+        # IN_PROGRESS — see the earlier repeat-question race discussion.
+        self._join_handled = False
+
         logger.info("WebSocket connected for session %s", self.session_id)
 
     async def disconnect(self, close_code):
@@ -88,8 +90,12 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
         try:
             if msg_type == "join":
                 await self._handle_join()
+            elif msg_type == "ready_for_question":
+                await self._handle_ready_for_question()
             elif msg_type == "answer_submitted":
                 await self._handle_answer_submitted(content)
+            elif msg_type == "end_interview":
+                await self._handle_end_interview()
             else:
                 await self.send_json({
                     "type": "error",
@@ -113,7 +119,19 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
         """
         Candidate has joined the call and is ready to begin. Triggers
         question generation (if not already done) and the intro turn.
+
+        Idempotent against duplicate 'join' messages on the same
+        connection — see the _join_handled flag set in connect().
         """
+        if self._join_handled:
+            logger.warning(
+                "Duplicate 'join' message received for session %s — "
+                "ignoring (already handled on this connection).",
+                self.session_id,
+            )
+            return
+        self._join_handled = True
+
         session = await self._refresh_session()
 
         if session.status == InterviewSession.Status.COMPLETED:
@@ -132,20 +150,27 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
             })
             return
 
-        fsm = await self._build_fsm(session)
-
         if session.status == InterviewSession.Status.IN_PROGRESS:
-            # Reconnect mid-interview — do NOT regenerate or restart.
-            # A full "resume exactly where I left off" flow would need
-            # the FSM to expose the current pending question; kept
-            # minimal for now, just acknowledges the reconnect.
             await self.send_json({
                 "type": "info",
                 "message": "Reconnected. Please wait for your next question.",
             })
             return
 
+        fsm = await self._build_fsm(session)
         turn = await database_sync_to_async(fsm.start)()
+        await self._send_turn(turn)
+
+    async def _handle_ready_for_question(self):
+        """
+        Sent by the frontend once the company intro has finished being
+        spoken (TTS speakEnd). Advances the FSM to the candidate's
+        self-intro request — the actual first Question row.
+        """
+        session = await self._refresh_session()
+        fsm = await self._build_fsm(session)
+
+        turn = await database_sync_to_async(fsm.advance_to_first_question)()
         await self._send_turn(turn)
 
     async def _handle_answer_submitted(self, content):
@@ -179,11 +204,6 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
                 "STT failed for session %s question %s: %s",
                 self.session_id, question_id, exc,
             )
-            # Don't fail the whole turn — proceed with an empty
-            # transcript. answer_analyzer.py's existing null/empty
-            # handling (via the analysis prompt's explicit instruction
-            # to treat empty transcripts as "no answer given" rather
-            # than penalizing STT artifacts) covers this gracefully.
             transcript_text = ""
         finally:
             await self._cleanup_audio_file(audio_path)
@@ -194,12 +214,27 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
         turn = await database_sync_to_async(fsm.submit_answer)(
             question_id=question_id,
             transcript_text=transcript_text,
-            audio_ref="",  # raw audio is discarded after transcription,
-                            # not retained — set a real path here instead
-                            # of deleting in _cleanup_audio_file if you
-                            # want audio kept for compliance/replay later.
+            audio_ref="",
         )
         await self._send_turn(turn)
+
+    async def _handle_end_interview(self):
+        """
+        Candidate clicked "End interview" in the UI. Closes the session
+        server-side (so DB status actually updates, not just the client
+        tearing down its own media/UI) and sends the close_interview
+        turn back so the existing handleInterviewClose() UI path runs.
+        Closes the socket afterward — matches proctoring_terminate()'s
+        pattern of closing with a distinct code (4000, vs 4001 for
+        proctoring termination) so server logs/close codes distinguish
+        the two paths if ever needed.
+        """
+        session = await self._refresh_session()
+        fsm = await self._build_fsm(session)
+
+        turn = await database_sync_to_async(fsm.end_interview_by_candidate)()
+        await self._send_turn(turn)
+        await self.close(code=4000)
 
     # ------------------------------------------------------------------
     # Group event handler — proctoring-triggered termination
@@ -222,13 +257,6 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
 
     @database_sync_to_async
     def _save_audio_to_scratch(self, audio_base64: str, audio_format: str) -> str:
-        """
-        Decodes base64 audio and writes it to a scratch file. Runs via
-        database_sync_to_async purely to keep it off the event loop for
-        the (synchronous) file write — no actual DB access here despite
-        the decorator name; Channels' sync-to-async wrapper is the
-        standard way to offload any blocking call, not just DB ones.
-        """
         try:
             audio_bytes = base64.b64decode(audio_base64, validate=True)
         except Exception as exc:
@@ -290,44 +318,5 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
         self.session = (
             InterviewSession.objects.select_related("candidate")
             .get(id=self.session_id)
-    )
+        )
         return self.session
-
-    # Add this new handler method to InterviewConsumer, and register it in receive_json
-
-    async def receive_json(self, content, **kwargs):
-        msg_type = content.get("type")
-
-        try:
-            if msg_type == "join":
-                await self._handle_join()
-            elif msg_type == "ready_for_question":
-                await self._handle_ready_for_question()
-            elif msg_type == "answer_submitted":
-                await self._handle_answer_submitted(content)
-            else:
-                await self.send_json({
-                    "type": "error",
-                    "message": f"Unrecognized message type: {msg_type}",
-                })
-        except Exception as exc:
-            logger.error(
-                "Unhandled error processing message type=%s for session %s: %s",
-                msg_type, self.session_id, exc, exc_info=True,
-            )
-            await self.send_json({
-                "type": "error",
-                "message": "Something went wrong. Please try again.",
-            })
-
-    async def _handle_ready_for_question(self):
-        """
-        Sent by the frontend once the company intro has finished being
-        spoken (TTS speakEnd). Advances the FSM to the candidate's
-        self-intro request — the actual first Question row.
-        """
-        session = await self._refresh_session()
-        fsm = await self._build_fsm(session)
-
-        turn = await database_sync_to_async(fsm.advance_to_first_question)()
-        await self._send_turn(turn)

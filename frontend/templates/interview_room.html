@@ -9,9 +9,16 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
 
 <!-- MediaPipe Face Mesh — used by proctoring_client.js for no-face /
-     multiple-faces / gaze-away detection. -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+     multiple-faces / gaze-away detection. deferred so a slow/blocked
+     CDN never blocks the rest of the page's scripts (in particular
+     boot(), which starts the candidate's camera) — these are only
+     needed once proctoringClient.startFaceMesh() actually runs. -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" defer></script>
+
+<!-- face-api.js — used by proctoring_client.js for identity/face-match
+     detection (reference photo + live descriptor comparison). -->
+<script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js" defer></script>
 <style>
   :root {
     --bg: #14161A;
@@ -244,6 +251,7 @@
   }
 
   button:hover { border-color: var(--text-dim); }
+  button:disabled { opacity: 0.5; cursor: default; }
 
   .btn-end {
     border-color: rgba(201, 67, 43, 0.4);
@@ -358,6 +366,108 @@
     margin-top: 14px;
   }
 
+  /* ---------- Proctoring notifications (bottom-left) ---------- */
+  #proctoring-notif-root {
+    position: fixed;
+    left: 16px;
+    bottom: 16px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 13px;
+  }
+  #proctoring-toast-stack {
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 6px;
+    margin-bottom: 4px;
+    max-width: 300px;
+  }
+  .proctoring-toast {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+  .proctoring-toast.visible { opacity: 1; transform: translateY(0); }
+  .proctoring-toast.warning { border-left: 3px solid var(--warn); }
+  .proctoring-toast.info { border-left: 3px solid var(--accent-bright); }
+  .proctoring-toast .title { font-weight: 500; font-size: 13px; }
+  .proctoring-toast .detail { opacity: 0.7; margin-top: 2px; font-size: 12px; }
+
+  #proctoring-log-toggle {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 20px;
+    padding: 8px 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  }
+  #proctoring-log-toggle:hover { border-color: var(--text-dim); }
+  #proctoring-log-toggle .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent-bright); display: inline-block;
+  }
+  #proctoring-log-toggle .badge {
+    background: var(--warn);
+    border-radius: 10px;
+    padding: 1px 6px;
+    font-size: 11px;
+    color: var(--text);
+  }
+  #proctoring-log-toggle .badge.hidden { display: none; }
+
+  #proctoring-log-panel {
+    width: 300px;
+    max-height: 320px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow-y: auto;
+    transition: max-height 0.2s ease, opacity 0.2s ease;
+  }
+  #proctoring-log-panel.collapsed {
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    pointer-events: none;
+    border: none;
+  }
+  #proctoring-log-list { padding: 6px; }
+  .proctoring-log-row {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    padding: 6px 8px;
+    border-radius: 6px;
+    color: var(--text);
+  }
+  .proctoring-log-row:hover { background: rgba(255,255,255,0.03); }
+  .proctoring-log-row .time { color: var(--text-dim); font-size: 11px; flex-shrink: 0; }
+  .proctoring-log-row .dot {
+    width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+  }
+  .proctoring-log-row .dot.warning { background: var(--warn); }
+  .proctoring-log-row .dot.info { background: var(--accent-bright); }
+  .proctoring-log-row .row-title { font-weight: 500; font-size: 12.5px; }
+  .proctoring-log-row .row-detail { color: var(--text-dim); font-size: 11.5px; }
+
   @media (max-width: 640px) {
     .stage { grid-template-columns: 1fr; }
     .cand-panel { aspect-ratio: 16 / 10; }
@@ -425,6 +535,7 @@
 <script src="{% static 'js/webrtc_client.js' %}"></script>
 <script src="{% static 'js/stt_recorder.js' %}"></script>
 <script src="{% static 'js/proctoring_client.js' %}"></script>
+<script src="{% static 'js/proctoring_notifications.js' %}"></script>
 <script src="{% static 'js/tts_player.js' %}"></script>
 
 <script>
@@ -443,6 +554,22 @@ const doneAnsweringBtn = document.getElementById('doneAnsweringBtn');
 const warningOverlay = document.getElementById('warningOverlay');
 const terminatedOverlay = document.getElementById('terminatedOverlay');
 const warningDismissBtn = document.getElementById('warningDismissBtn');
+
+// Human-readable labels for raw client-side proctoring flags, used
+// only for the bottom-left activity log/toast — has no effect on what
+// gets sent to the server or on strike/warning logic, which remains
+// entirely server-side (risk_scorer.py).
+const FLAG_LABELS = {
+  tab_switch: "Tab switch detected",
+  window_blur: "Window lost focus",
+  fullscreen_exit: "Exited fullscreen",
+  copy_paste: "Copy/paste detected",
+  devtools_opened: "Developer tools detected",
+  no_face: "Face not detected",
+  multiple_faces: "Multiple faces detected",
+  gaze_away: "Gaze moved away from screen",
+  face_mismatch: "Face does not match reference photo",
+};
 
 function setUiState(state) {
   aiPanel.classList.remove('speaking');
@@ -503,6 +630,7 @@ const proctoringClient = new ProctoringClient(SESSION_ID);
 let currentQuestionId = null;
 let micMuted = false;
 let isCompanyIntro = false;
+let endInterviewFallbackTimer = null;
 
 async function boot() {
   try {
@@ -512,7 +640,21 @@ async function boot() {
 
     sttRecorder.init(webrtcClient.getStream());
 
-    proctoringClient.startFaceMesh(webrtcClient.getVideoElement());
+    // Proctoring library init is wrapped separately so that if the
+    // MediaPipe/face-api CDN scripts (loaded with `defer` in <head>)
+    // haven't finished loading yet, or fail to load at all, the
+    // candidate's camera preview and interview flow still work — only
+    // face-based proctoring signals are skipped, not the whole
+    // interview. Without this, an exception thrown here (e.g.
+    // "FaceMesh is not defined") would be caught by the outer catch
+    // below and show a fake "camera/mic access failed" error even
+    // though the camera itself is working fine.
+    try {
+      proctoringClient.startFaceMesh(webrtcClient.getVideoElement());
+      proctoringClient.startFaceMatch(webrtcClient.getVideoElement());
+    } catch (proctoringErr) {
+      console.warn('[boot] face-based proctoring failed to start (camera still works):', proctoringErr);
+    }
     proctoringClient.startBrowserEventDetection();
 
     fsNote.textContent = "Click anywhere to enter fullscreen and begin.";
@@ -571,7 +713,7 @@ ttsPlayer.on('speakStart', () => {
 ttsPlayer.on('speakEnd', () => {
   if (isCompanyIntro) {
     isCompanyIntro = false;
-    interviewSocket._send({ type: 'ready_for_question' });
+    interviewSocket.sendReadyForQuestion();
     return;
   }
   if (!currentQuestionId || micMuted) return;
@@ -607,13 +749,52 @@ sttRecorder.startRecording = function () {
   answerTimeout = setTimeout(stopAndSubmitAnswer, MAX_ANSWER_DURATION_MS);
 };
 
-proctoringClient.on('warning', () => {
+// --- Proctoring: raw client-side detections -> bottom-left log ---
+// This does NOT affect warnings/termination — that's still driven
+// entirely by the server via the 'warning'/'terminated' events below.
+// gaze_away intentionally shows only in the log (showToast: false)
+// rather than popping a toast every time, since it's a noisy,
+// non-strike-eligible heuristic signal.
+proctoringClient.on('flag', ({ flagType, metadata }) => {
+  const isCountableClientSide = [
+    'tab_switch', 'window_blur', 'fullscreen_exit',
+    'copy_paste', 'devtools_opened', 'no_face', 'multiple_faces',
+    'face_mismatch',
+  ].includes(flagType);
+
+  ProctoringNotifications.push({
+    level: isCountableClientSide ? 'warning' : 'info',
+    title: FLAG_LABELS[flagType] || flagType,
+    detail: metadata && metadata.duration_ms
+      ? `${Math.round(metadata.duration_ms / 1000)}s`
+      : '',
+    showToast: false, // client-side detections log quietly; the
+                        // server's 'warning' event (below) is what
+                        // actually pops a toast + the fullscreen
+                        // overlay, since that's the authoritative
+                        // strike decision.
+  });
+});
+
+proctoringClient.on('warning', (message) => {
   showWarning();
+  ProctoringNotifications.push({
+    level: 'warning',
+    title: 'Warning issued',
+    detail: message || '',
+    showToast: true,
+  });
 });
 
 proctoringClient.on('terminated', (message) => {
   showTerminated(message);
   cleanupAllMedia();
+  ProctoringNotifications.push({
+    level: 'warning',
+    title: 'Interview terminated',
+    detail: message || '',
+    showToast: true,
+  });
 });
 
 warningDismissBtn.addEventListener('click', async () => {
@@ -629,16 +810,28 @@ muteBtn.addEventListener('click', () => {
 
 endBtn.addEventListener('click', () => {
   if (confirm('End the interview now? This cannot be undone.')) {
-    interviewSocket.disconnect();
-    proctoringClient.disconnect();
-    cleanupAllMedia();
-    setUiState('ended');
-    statusText.textContent = 'Interview ended by candidate.';
-    stopTimer();
+    endBtn.disabled = true;
+    endBtn.textContent = 'Ending…';
+    interviewSocket.sendEndInterview();
+
+    // Fallback: if the server doesn't confirm within 4s (e.g. socket
+    // already dropped), close out locally so the candidate isn't stuck
+    // on a frozen "Ending…" button. handleInterviewClose() clears this
+    // timer if the real server response arrives first.
+    endInterviewFallbackTimer = setTimeout(() => {
+      statusText.textContent = 'Interview ended.';
+      setUiState('ended');
+      stopTimer();
+      cleanupAllMedia();
+    }, 4000);
   }
 });
 
 function handleInterviewClose(message) {
+  if (endInterviewFallbackTimer) {
+    clearTimeout(endInterviewFallbackTimer);
+    endInterviewFallbackTimer = null;
+  }
   aiCaption.textContent = message;
   statusText.textContent = 'Interview complete.';
   setUiState('ended');

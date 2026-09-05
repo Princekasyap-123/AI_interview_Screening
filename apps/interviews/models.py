@@ -1,3 +1,5 @@
+# apps/interviews/models.py
+
 import uuid
 
 from django.conf import settings
@@ -20,6 +22,7 @@ class InterviewSession(models.Model):
         NONE = "none", "Not terminated"
         PROCTORING_VIOLATION = "proctoring_violation", "Repeated proctoring violation"
         CANDIDATE_LEFT = "candidate_left", "Candidate disconnected"
+        CANDIDATE_ENDED = "candidate_ended", "Candidate ended interview early"
         TECHNICAL_ERROR = "technical_error", "Technical error"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -30,8 +33,6 @@ class InterviewSession(models.Model):
         related_name="interview_sessions",
     )
 
-    # Optional link if you're generating questions against a specific JD
-    # rather than just the candidate's general profile.
     job_description_text = models.TextField(blank=True)
 
     status = models.CharField(
@@ -47,13 +48,15 @@ class InterviewSession(models.Model):
         default=TerminationReason.NONE,
     )
 
-    # Freeform note shown internally (and optionally echoed to candidate
-    # in the termination overlay) when a session ends early.
     termination_note = models.TextField(blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
     ended_at = models.DateTimeField(null=True, blank=True)
+
+    access_token = models.CharField(
+        max_length=64, unique=True, editable=False, blank=True
+    )
 
     class Meta:
         ordering = ["-created_at"]
@@ -61,6 +64,11 @@ class InterviewSession(models.Model):
             models.Index(fields=["status"]),
             models.Index(fields=["candidate", "status"]),
         ]
+
+    def save(self, *args, **kwargs):
+        if not self.access_token:
+            self.access_token = uuid.uuid4().hex
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"Interview {self.id} — {self.candidate} ({self.status})"
@@ -89,11 +97,8 @@ class Question(models.Model):
     order = models.PositiveSmallIntegerField()
     text = models.TextField()
 
-    # e.g. "django_orm", "system_design", "behavioral" — used for
-    # generation traceability and later reporting, not shown to candidate.
     topic_tag = models.CharField(max_length=100, blank=True)
 
-    # Raw generation context sent to the LLM, kept for debugging/audit.
     generation_context = models.JSONField(default=dict, blank=True)
 
     asked_at = models.DateTimeField(null=True, blank=True)
@@ -105,12 +110,30 @@ class Question(models.Model):
     def __str__(self):
         return f"Q{self.order} — {self.text[:60]}"
 
+    @property
+    def has_answer(self) -> bool:
+        """
+        Safe existence check for the reverse OneToOne `answer` accessor.
+        Question.answer raises Question.answer.RelatedObjectDoesNotExist
+        when unset — it does NOT behave like a queryset/manager. Use
+        this instead of a bare `question.answer` check anywhere in
+        interview_state.py or elsewhere.
+        """
+        return Answer.objects.filter(question_id=self.id).exists()
+
 
 class Answer(models.Model):
     """
     Candidate's response to a Question: raw transcript plus backend-only
     analysis. Nothing on this model should ever reach a candidate-facing
     serializer — enforce that at the view/serializer layer.
+
+    NOTE: this is a OneToOneField, so a Question can have at most ONE
+    Answer row, ever. If a follow-up is asked and answered,
+    analyze_answer() must update this same row rather than creating a
+    second one — meaning the candidate's original first-answer
+    transcript/analysis is overwritten by the follow-up answer once
+    analyzed. Flagged as a separate open item — not addressed here.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -121,15 +144,10 @@ class Answer(models.Model):
 
     transcript_text = models.TextField(blank=True)
 
-    # Path/reference to the stored audio chunk, if you keep raw audio.
     audio_ref = models.CharField(max_length=500, blank=True)
 
-    # Structured LLM output: e.g. {"relevance": 7, "depth": 6,
-    # "communication": 8, "notes": "...", "red_flags": []}
     analysis_json = models.JSONField(default=dict, blank=True)
 
-    # Convenience denormalized score pulled from analysis_json for
-    # fast querying/sorting on the dashboard.
     score = models.FloatField(null=True, blank=True)
 
     answered_at = models.DateTimeField(null=True, blank=True)
@@ -157,14 +175,11 @@ class FinalRating(models.Model):
 
     overall_score = models.FloatField()
 
-    # e.g. {"communication": 78, "technical_depth": 65, "relevance": 82}
     category_scores = models.JSONField(default=dict, blank=True)
 
     strengths = models.TextField(blank=True)
     concerns = models.TextField(blank=True)
 
-    # True red flags surfaced by the LLM during analysis (not proctoring
-    # flags — those live on ProctoringFlag in the proctoring app).
     content_flags = models.JSONField(default=list, blank=True)
 
     recruiter_visible = models.BooleanField(default=True)

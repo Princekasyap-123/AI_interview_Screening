@@ -13,7 +13,6 @@ from apps.candidates.serializers import (
     CandidateCreateSerializer,
     CandidateSerializer,
 )
-from apps.candidates.tasks import submit_and_parse_resume
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +28,13 @@ class CandidateCreateView(APIView):
     required), change permission_classes to [IsAuthenticated] — flagging
     this explicitly since REST_FRAMEWORK in settings.py defaults every
     OTHER view to IsAuthenticated, and this one deliberately opts out.
+
+    Resume parsing trigger note: this view does NOT call
+    submit_and_parse_resume itself. apps/candidates/signals.py's
+    post_save handler on Candidate already fires for every creation
+    path — admin, this endpoint, shell, future imports — in one place.
+    Calling it again here would submit the same resume to the
+    bulkresume service twice per upload.
     """
 
     permission_classes = [AllowAny]
@@ -40,15 +46,6 @@ class CandidateCreateView(APIView):
         candidate = serializer.save()
 
         logger.info("Created candidate %s (%s)", candidate.id, candidate.email)
-
-        # Trigger resume parsing automatically if a file was uploaded.
-        # This is the fix for candidates created via this REST endpoint
-        # specifically — candidates created via Django admin are covered
-        # separately by the post_save signal in apps/candidates/signals.py,
-        # since admin never touches this view at all.
-        if candidate.resume_file:
-            submit_and_parse_resume.delay(str(candidate.id))
-            logger.info("Triggered resume parsing for candidate %s via API", candidate.id)
 
         return Response(
             CandidateSerializer(candidate).data,

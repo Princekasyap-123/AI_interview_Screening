@@ -13,6 +13,11 @@ class Candidate(models.Model):
     different roles, etc.) via the FK on InterviewSession.
     """
 
+    class ParsingStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PARSED = "parsed", "Parsed"
+        FAILED = "failed", "Failed"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
     name = models.CharField(max_length=255)
@@ -20,6 +25,17 @@ class Candidate(models.Model):
     phone = models.CharField(max_length=30, blank=True)
 
     resume_file = models.FileField(upload_to="resumes/%Y/%m/", blank=True, null=True)
+
+    # Tracks the async bulkresume parsing pipeline (see
+    # apps/candidates/signals.py + tasks.py). Blank when no resume_file
+    # has ever been uploaded (nothing to parse) — only sensible reading
+    # this field is when resume_file is set. Written exclusively via
+    # queryset .update() calls (not instance.save()) at every
+    # transition point, so updating this field never re-triggers the
+    # post_save signal that kicks off parsing in the first place.
+    parsing_status = models.CharField(
+        max_length=10, choices=ParsingStatus.choices, blank=True
+    )
 
     # Which role/JD this candidate is currently being screened for —
     # informational; a session can still override with its own

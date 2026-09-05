@@ -3,25 +3,52 @@
 /**
  * Owns the second WebSocket connection (to ProctoringConsumer,
  * apps/proctoring/consumers.py) and all client-side detection: tab
- * switches, window blur, fullscreen exits, plus face-mesh-based
- * no-face/multiple-faces/gaze-away detection via MediaPipe.
+ * switches, window blur, fullscreen exits, face-mesh-based
+ * no-face/multiple-faces/gaze-away detection via MediaPipe, and
+ * face-match (identity) detection via face-api.js.
  *
  * This file sends RAW signals only — it does NOT decide warn vs.
  * terminate itself. That decision is entirely server-side
- * (risk_scorer.py), per the security fix made earlier in this build.
- * This file only reports "this happened, for this long" and reacts to
- * whatever the server sends back ("warning" or "terminated").
+ * (risk_scorer.py). This file only reports "this happened, for this
+ * long" and reacts to whatever the server sends back.
  *
  * Message shapes (must match apps/proctoring/consumers.py exactly):
  *   OUT: {"type": "flag", "flag_type": "tab_switch", "metadata": {"duration_ms": 2100}}
+ *   OUT: {"type": "reference_photo", "image_base64": "...", "image_format": "jpeg"}
  *   IN:  {"type": "warning", "message": "..."}
  *   IN:  {"type": "terminated", "message": "..."}
  *   IN:  {"type": "error", "message": "..."}
  *
- * MediaPipe Face Mesh is loaded via CDN script tags in interview_room.html
- * (not bundled here) — this file assumes `FaceMesh` and `Camera` globals
- * exist on window, per the standard MediaPipe JS distribution.
+ * MediaPipe Face Mesh and face-api.js are loaded via CDN script tags in
+ * interview_room.html — this file assumes `FaceMesh`, `Camera`, and
+ * `faceapi` globals exist on window.
+ *
+ * NOTE on face-api.js model weights: loaded from a CDN mirror below.
+ * If that mirror ever becomes unreachable, download the weight files
+ * and serve them from your own static/ folder instead, then update
+ * FACE_API_MODEL_URL accordingly.
  */
+
+const FACE_API_MODEL_URL =
+  "https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js/weights";
+
+// How long to wait after the camera starts before capturing the
+// reference face — lets exposure/focus stabilize so the reference
+// descriptor isn't computed from a blurry first frame.
+const REFERENCE_CAPTURE_DELAY_MS = 3000;
+const REFERENCE_CAPTURE_RETRY_MS = 2000;
+const REFERENCE_CAPTURE_MAX_ATTEMPTS = 6; // ~12s of retrying before giving up
+
+// Grace window after the reference is captured before live mismatch
+// checks begin — avoids a false mismatch racing in immediately.
+const FACE_MATCH_GRACE_MS = 5000;
+const FACE_MATCH_CHECK_INTERVAL_MS = 4000;
+
+// Euclidean distance threshold between face-api.js descriptors.
+// face-api's own docs suggest ~0.6 as a typical same-person cutoff;
+// used slightly stricter here since a false mismatch has real
+// consequences (proctoring strike). Tune based on real testing.
+const FACE_MATCH_DISTANCE_THRESHOLD = 0.55;
 
 class ProctoringClient {
   constructor(sessionId) {
@@ -29,26 +56,31 @@ class ProctoringClient {
     this.socket = null;
 
     this.listeners = {
-      warning: [],     // fn(message)
-      terminated: [],  // fn(message)
+      warning: [],
+      terminated: [],
       open: [],
+      flag: [],
     };
 
-    // Tracks in-flight duration timers so we only report a flag once
-    // the underlying condition ends (or crosses a "still ongoing"
-    // check-in interval) — durations matter for server-side countability
-    // (see flag_processor.py's DURATION_GATED_TYPES).
     this._activeTimers = {
       tabSwitch: null,
       windowBlur: null,
       noFace: null,
       gazeAway: null,
+      faceMismatch: null,
     };
 
     this._faceMesh = null;
     this._camera = null;
     this._videoElement = null;
     this._lastFaceCheckState = { faceCount: 1, gazeAway: false };
+
+    // Face-match state
+    this._matchVideoElement = null;
+    this._referenceDescriptor = null;
+    this._faceMatchReady = false;
+    this._faceMatchCheckInterval = null;
+    this._referenceCaptureAttempts = 0;
   }
 
   // ------------------------------------------------------------------
@@ -112,6 +144,7 @@ class ProctoringClient {
       this.socket.close();
     }
     this._stopFaceMesh();
+    this._stopFaceMatch();
   }
 
   _handleMessage(data) {
@@ -136,11 +169,25 @@ class ProctoringClient {
   // ------------------------------------------------------------------
 
   _sendFlag(flagType, metadata = {}) {
+    this._emit("flag", { flagType, metadata });
+
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       console.warn("[ProctoringClient] cannot send flag, socket not open:", flagType);
       return;
     }
     this.socket.send(JSON.stringify({ type: "flag", flag_type: flagType, metadata }));
+  }
+
+  _sendReferencePhoto(imageBase64) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      console.warn("[ProctoringClient] cannot send reference photo, socket not open");
+      return;
+    }
+    this.socket.send(JSON.stringify({
+      type: "reference_photo",
+      image_base64: imageBase64,
+      image_format: "jpeg",
+    }));
   }
 
   // ------------------------------------------------------------------
@@ -166,8 +213,6 @@ class ProctoringClient {
 
     document.addEventListener("fullscreenchange", () => {
       if (!document.fullscreenElement) {
-        // Fullscreen exit is always-countable server-side (no duration
-        // gate), so report immediately rather than timing it.
         this._sendFlag("fullscreen_exit", {});
       }
     });
@@ -179,9 +224,6 @@ class ProctoringClient {
       this._sendFlag("copy_paste", { action: "paste" });
     });
 
-    // Rough devtools-open heuristic: large delta between outer and inner
-    // window dimensions. Not bulletproof (false positives on some
-    // browser zoom levels / extensions), but a reasonable free signal.
     this._devtoolsCheckInterval = setInterval(() => {
       const threshold = 160;
       const widthDelta = window.outerWidth - window.innerWidth;
@@ -195,7 +237,7 @@ class ProctoringClient {
   }
 
   _startTimer(key) {
-    if (this._activeTimers[key] !== null) return; // already timing
+    if (this._activeTimers[key] !== null) return;
     this._activeTimers[key] = Date.now();
   }
 
@@ -208,9 +250,7 @@ class ProctoringClient {
   }
 
   // ------------------------------------------------------------------
-  // Fullscreen enforcement helper (called from interview_room.html on
-  // interview start — not auto-triggered here since entering fullscreen
-  // requires a user gesture in most browsers)
+  // Fullscreen enforcement helper
   // ------------------------------------------------------------------
 
   static async requestFullscreen() {
@@ -225,13 +265,6 @@ class ProctoringClient {
   // MediaPipe Face Mesh — no-face / multiple-faces / gaze-away detection
   // ------------------------------------------------------------------
 
-  /**
-   * videoElement: the <video> element already showing the candidate's
-   * own webcam feed (webrtc_client.js owns creating this stream — this
-   * function just attaches MediaPipe's Camera helper to read frames
-   * from the same element, it does not request its own separate
-   * getUserMedia stream).
-   */
   startFaceMesh(videoElement) {
     if (typeof FaceMesh === "undefined" || typeof Camera === "undefined") {
       console.error(
@@ -249,7 +282,7 @@ class ProctoringClient {
     });
 
     this._faceMesh.setOptions({
-      maxNumFaces: 3, // detect up to 3 so we can distinguish 1 vs 2+ reliably
+      maxNumFaces: 3,
       refineLandmarks: false,
       minDetectionConfidence: 0.5,
       minTrackingConfidence: 0.5,
@@ -290,8 +323,6 @@ class ProctoringClient {
     }
 
     if (faceCount >= 2) {
-      // Always-countable server-side, report immediately rather than
-      // timing — two faces for even a moment is a real signal.
       this._sendFlag("multiple_faces", { face_count: faceCount });
     }
 
@@ -305,18 +336,7 @@ class ProctoringClient {
     }
   }
 
-  /**
-   * Very rough gaze estimate using iris/eye landmark horizontal offset
-   * relative to face bounding box — NOT a calibrated gaze tracker. This
-   * catches "looking sharply left/right/down" (e.g. at a phone or
-   * second monitor) but will not catch subtle eye movement. Tune the
-   * threshold based on real testing; false positives here just mean an
-   * uncounted low-severity flag (see flag_processor.py's generous
-   * MIN_GAZE_AWAY_DURATION_MS), not an automatic strike.
-   */
   _estimateGazeAway(landmarks) {
-    // MediaPipe Face Mesh landmark indices: 33/263 = left/right eye
-    // outer corners, 1 = nose tip — a coarse horizontal symmetry check.
     const leftEye = landmarks[33];
     const rightEye = landmarks[263];
     const nose = landmarks[1];
@@ -326,8 +346,144 @@ class ProctoringClient {
     const eyeMidpointX = (leftEye.x + rightEye.x) / 2;
     const horizontalOffset = Math.abs(nose.x - eyeMidpointX);
 
-    const GAZE_AWAY_THRESHOLD = 0.04; // normalized coordinate units, needs real tuning
+    const GAZE_AWAY_THRESHOLD = 0.04;
     return horizontalOffset > GAZE_AWAY_THRESHOLD;
+  }
+
+  // ------------------------------------------------------------------
+  // face-api.js — reference capture + live identity match
+  // ------------------------------------------------------------------
+
+  /**
+   * Loads face-api.js models, then captures a reference face descriptor
+   * ~3s after the video feed is available (letting it stabilize first).
+   * Call this once, alongside startFaceMesh(), using the SAME video
+   * element (the candidate's own webcam feed — no separate camera
+   * request here either).
+   */
+  async startFaceMatch(videoElement) {
+    if (typeof faceapi === "undefined") {
+      console.error(
+        "[ProctoringClient] face-api.js not found on window — make sure " +
+        "the CDN script is included in interview_room.html."
+      );
+      return;
+    }
+
+    this._matchVideoElement = videoElement;
+
+    try {
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(FACE_API_MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(FACE_API_MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(FACE_API_MODEL_URL),
+      ]);
+    } catch (err) {
+      console.error("[ProctoringClient] failed to load face-api models:", err);
+      return;
+    }
+
+    setTimeout(() => this._captureReferenceFace(), REFERENCE_CAPTURE_DELAY_MS);
+  }
+
+  async _captureReferenceFace() {
+    const videoElement = this._matchVideoElement;
+    if (!videoElement) return;
+
+    this._referenceCaptureAttempts += 1;
+
+    let detection;
+    try {
+      detection = await faceapi
+        .detectSingleFace(videoElement, new faceapi.TinyFaceDetectorOptions())
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+    } catch (err) {
+      console.error("[ProctoringClient] face-api detection error during reference capture:", err);
+      detection = null;
+    }
+
+    if (!detection) {
+      if (this._referenceCaptureAttempts >= REFERENCE_CAPTURE_MAX_ATTEMPTS) {
+        console.error(
+          "[ProctoringClient] gave up capturing reference face after " +
+          `${this._referenceCaptureAttempts} attempts — face-match ` +
+          "detection will not be active for this session."
+        );
+        return;
+      }
+      console.warn("[ProctoringClient] no face found for reference capture, retrying...");
+      setTimeout(() => this._captureReferenceFace(), REFERENCE_CAPTURE_RETRY_MS);
+      return;
+    }
+
+    this._referenceDescriptor = detection.descriptor;
+
+    // Snapshot a still frame for the recruiter dashboard's audit trail
+    // — separate from the descriptor used for live comparison above.
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = videoElement.videoWidth;
+      canvas.height = videoElement.videoHeight;
+      canvas.getContext("2d").drawImage(videoElement, 0, 0);
+      const imageBase64 = canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
+      this._sendReferencePhoto(imageBase64);
+    } catch (err) {
+      console.error("[ProctoringClient] failed to capture reference snapshot:", err);
+    }
+
+    // Grace window before live mismatch checks begin.
+    setTimeout(() => {
+      this._faceMatchReady = true;
+      this._faceMatchCheckInterval = setInterval(
+        () => this._checkFaceMatch(),
+        FACE_MATCH_CHECK_INTERVAL_MS
+      );
+      console.log("[ProctoringClient] face-match live checks active");
+    }, FACE_MATCH_GRACE_MS);
+
+    console.log("[ProctoringClient] reference face captured");
+  }
+
+  async _checkFaceMatch() {
+    if (!this._faceMatchReady || !this._referenceDescriptor || !this._matchVideoElement) {
+      return;
+    }
+
+    let detection;
+    try {
+      detection = await faceapi
+        .detectSingleFace(this._matchVideoElement, new faceapi.TinyFaceDetectorOptions())
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+    } catch (err) {
+      console.error("[ProctoringClient] face-api detection error during match check:", err);
+      return;
+    }
+
+    if (!detection) {
+      // No face currently visible — that's already covered by the
+      // MediaPipe no_face flag; don't double-flag the same underlying
+      // condition as a mismatch.
+      this._endTimer("faceMismatch", "face_mismatch");
+      return;
+    }
+
+    const distance = faceapi.euclideanDistance(this._referenceDescriptor, detection.descriptor);
+
+    if (distance > FACE_MATCH_DISTANCE_THRESHOLD) {
+      this._startTimer("faceMismatch");
+    } else {
+      this._endTimer("faceMismatch", "face_mismatch");
+    }
+  }
+
+  _stopFaceMatch() {
+    if (this._faceMatchCheckInterval) {
+      clearInterval(this._faceMatchCheckInterval);
+      this._faceMatchCheckInterval = null;
+    }
+    this._faceMatchReady = false;
   }
 }
 

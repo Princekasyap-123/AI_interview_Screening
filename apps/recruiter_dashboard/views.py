@@ -3,6 +3,7 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils.decorators import method_decorator
 from django.views import View
 
@@ -32,6 +33,7 @@ class DashboardView(View):
             sessions = sessions.filter(status=status_filter)
 
         selected_session = None
+        interview_link = None
         selected_id = request.GET.get("session_id")
         if selected_id:
             selected_session = get_object_or_404(
@@ -43,6 +45,25 @@ class DashboardView(View):
                 ),
                 id=selected_id,
             )
+            # Build the full candidate-facing interview URL via reverse().
+            # This is the top-level route defined directly in
+            # config/urls.py (NOT the one under apps/interviews/urls.py,
+            # which is a separate /api/interviews/<id>/room/<token>/
+            # path also pointing at InterviewRoomView but is not the
+            # link recruiters should hand to candidates):
+            #   path("interview/<uuid:session_id>/<str:access_token>/",
+            #        InterviewRoomView.as_view(), name="interview-room")
+            # It has no app namespace since it's declared directly in
+            # urlpatterns, not inside an include().
+            interview_link = request.build_absolute_uri(
+                reverse(
+                    "interview-room",
+                    kwargs={
+                        "session_id": selected_session.id,
+                        "access_token": selected_session.access_token,
+                    },
+                )
+            )
 
         return render(
             request,
@@ -51,6 +72,7 @@ class DashboardView(View):
                 "sessions": sessions,
                 "candidates": Candidate.objects.order_by("-created_at"),
                 "selected_session": selected_session,
+                "interview_link": interview_link,
                 "status_filter": status_filter or "",
                 "status_choices": InterviewSession.Status.choices,
             },

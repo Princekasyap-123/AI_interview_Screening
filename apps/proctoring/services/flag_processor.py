@@ -8,22 +8,15 @@ from apps.proctoring.models import ProctoringFlag, ProctoringSession
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------
-# Countability rules
-# ---------------------------------------------------------------------
-# Not every raw signal should burn one of the candidate's two strikes.
-# A flag counts toward termination only if it crosses a minimum
-# duration/confidence threshold — short blips are logged for the audit
-# trail but don't trigger a warning on their own. Tune these thresholds
-# based on real candidate behavior once you have data.
-
-MIN_TAB_SWITCH_DURATION_MS = 1500       # ignore instant/accidental blur
+MIN_TAB_SWITCH_DURATION_MS = 1500
 MIN_WINDOW_BLUR_DURATION_MS = 2000
-MIN_NO_FACE_DURATION_MS = 4000          # brief head-turn shouldn't count
-MIN_GAZE_AWAY_DURATION_MS = 5000        # gaze is noisy, needs a longer bar
+MIN_NO_FACE_DURATION_MS = 4000
+MIN_GAZE_AWAY_DURATION_MS = 5000
+# Identity mismatch needs a sustained signal, not a single misread
+# frame during a head turn or lighting change — same philosophy as
+# the other duration gates above.
+MIN_FACE_MISMATCH_DURATION_MS = 4000
 
-# Flag types that are always countable regardless of duration, because
-# there's no legitimate accidental version of them.
 ALWAYS_COUNTABLE_TYPES = {
     ProctoringFlag.FlagType.FULLSCREEN_EXIT,
     ProctoringFlag.FlagType.MULTIPLE_FACES,
@@ -31,16 +24,14 @@ ALWAYS_COUNTABLE_TYPES = {
     ProctoringFlag.FlagType.COPY_PASTE,
 }
 
-# Duration-gated flag types: (flag_type -> minimum duration_ms to count)
 DURATION_GATED_TYPES = {
     ProctoringFlag.FlagType.TAB_SWITCH: MIN_TAB_SWITCH_DURATION_MS,
     ProctoringFlag.FlagType.WINDOW_BLUR: MIN_WINDOW_BLUR_DURATION_MS,
     ProctoringFlag.FlagType.NO_FACE: MIN_NO_FACE_DURATION_MS,
     ProctoringFlag.FlagType.GAZE_AWAY: MIN_GAZE_AWAY_DURATION_MS,
+    ProctoringFlag.FlagType.FACE_MISMATCH: MIN_FACE_MISMATCH_DURATION_MS,
 }
 
-# Base severity per flag type — used by risk_scorer.py for the
-# informational 0-100 risk score, independent of the countable/warn logic.
 SEVERITY_MAP = {
     ProctoringFlag.FlagType.TAB_SWITCH: ProctoringFlag.Severity.HIGH,
     ProctoringFlag.FlagType.WINDOW_BLUR: ProctoringFlag.Severity.MEDIUM,
@@ -50,15 +41,13 @@ SEVERITY_MAP = {
     ProctoringFlag.FlagType.GAZE_AWAY: ProctoringFlag.Severity.LOW,
     ProctoringFlag.FlagType.COPY_PASTE: ProctoringFlag.Severity.MEDIUM,
     ProctoringFlag.FlagType.DEVTOOLS_OPENED: ProctoringFlag.Severity.HIGH,
+    # HIGH — an identity mismatch (someone else answering) is one of
+    # the most serious signals this system can raise.
+    ProctoringFlag.FlagType.FACE_MISMATCH: ProctoringFlag.Severity.HIGH,
 }
 
 
 class FlagProcessingResult:
-    """
-    Return value of process_flag(). Consumed by the proctoring consumer
-    to decide what to tell the candidate/interview consumer next.
-    """
-
     def __init__(self, flag: ProctoringFlag, is_countable: bool, is_first_strike: bool, is_second_strike: bool):
         self.flag = flag
         self.is_countable = is_countable
@@ -72,18 +61,6 @@ def process_flag(
     metadata: dict | None = None,
     occurred_at=None,
 ) -> FlagProcessingResult:
-    """
-    Records a raw proctoring signal and decides whether it's countable
-    toward the warn/terminate threshold.
-
-    This function does NOT decide whether to actually warn or terminate
-    — it only determines countability and updates the running count.
-    risk_scorer.py (next file) is what the consumer calls to translate
-    "is this now strike 1 or strike 2" into an actual action.
-
-    metadata: flag-type-specific context, e.g. {"duration_ms": 3200}
-        for duration-gated types, {"face_count": 2} for multiple_faces.
-    """
     metadata = metadata or {}
     occurred_at = occurred_at or timezone.now()
 
@@ -132,20 +109,12 @@ def process_flag(
 
 
 def _is_countable(flag_type: str, metadata: dict) -> bool:
-    """
-    Determines whether a raw flag crosses the threshold to count as a
-    real violation, as opposed to noise (brief blur, momentary head turn).
-    """
     if flag_type in ALWAYS_COUNTABLE_TYPES:
         return True
 
     if flag_type in DURATION_GATED_TYPES:
         duration_ms = metadata.get("duration_ms")
         if duration_ms is None:
-            # No duration reported — be conservative and count it, since
-            # missing data shouldn't let a real violation slip through
-            # uncounted. Frontend should always send duration_ms for
-            # these types; log a warning so it gets fixed.
             logger.warning(
                 "Flag type %s is duration-gated but no duration_ms was "
                 "provided — counting it by default.",
@@ -154,6 +123,4 @@ def _is_countable(flag_type: str, metadata: dict) -> bool:
             return True
         return duration_ms >= DURATION_GATED_TYPES[flag_type]
 
-    # Unrecognized-but-valid flag type with no explicit rule — default
-    # to countable rather than silently ignoring a real signal.
     return True

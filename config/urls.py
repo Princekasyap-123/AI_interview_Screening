@@ -5,6 +5,8 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.urls import include, path
 
+from apps.interviews.views import InterviewRoomView
+
 urlpatterns = [
     path("admin/", admin.site.urls),
 
@@ -12,9 +14,19 @@ urlpatterns = [
     path("api/interviews/", include("apps.interviews.urls")),
 
     # recruiter_dashboard serves HTML templates (not a REST API), so it's
-    # mounted at a plain path rather than under /api/ — not yet written,
-    # this include will fail until recruiter_dashboard/urls.py exists.
+    # mounted at a plain path rather than under /api/.
     path("dashboard/", include("apps.recruiter_dashboard.urls")),
+
+    # Candidate-facing interview link — outside /api/, this is the URL
+    # recruiters actually copy/send to candidates. Requires BOTH
+    # session_id and access_token to match (see InterviewRoomView),
+    # so a guessed/leaked session_id alone can't open someone else's
+    # interview.
+    path(
+        "interview/<uuid:session_id>/<str:access_token>/",
+        InterviewRoomView.as_view(),
+        name="interview-room",
+    ),
 
     # frontend/templates (interview_room.html, dashboard.html) are served
     # via Django's TEMPLATES DIRS config already, not routed here directly

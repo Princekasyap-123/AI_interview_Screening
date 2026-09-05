@@ -21,10 +21,18 @@ POLL_RETRY_DELAY_SECONDS = 15
 @shared_task(bind=True)
 def submit_and_parse_resume(self, candidate_id: str):
     """
-    Entry point: call this right after CandidateCreateView saves a
-    Candidate with a resume_file. Submits the file to the bulkresume
-    service and kicks off polling. Not wired into the view yet — see
-    wiring note.
+    Entry point: triggered automatically by the post_save signal in
+    apps/candidates/signals.py whenever a Candidate is saved with a
+    resume_file and no existing resume_profile — covers admin, the
+    /api/candidates/ REST endpoint, and shell-created candidates alike.
+    Do not call this directly from a view as well, or the resume gets
+    submitted twice (signal already handles every creation path).
+
+    Submits the file to the bulkresume service and kicks off polling.
+    parsing_status is already set to PENDING by the signal before this
+    task runs; here we only need to move it to FAILED on a submission
+    error, since the polling task owns the PARSED/FAILED transitions
+    for everything after that point.
     """
     candidate = Candidate.objects.filter(id=candidate_id).first()
     if candidate is None or not candidate.resume_file:
@@ -38,6 +46,9 @@ def submit_and_parse_resume(self, candidate_id: str):
         batch_id = submit_resume_for_parsing(candidate.resume_file)
     except BulkResumeAPIError as exc:
         logger.error("Failed to submit resume for candidate %s: %s", candidate_id, exc)
+        Candidate.objects.filter(id=candidate_id).update(
+            parsing_status=Candidate.ParsingStatus.FAILED
+        )
         return
 
     poll_resume_batch.apply_async(
@@ -49,9 +60,10 @@ def submit_and_parse_resume(self, candidate_id: str):
 def poll_resume_batch(self, candidate_id: str, batch_id: str, attempt: int = 1):
     """
     Polls the bulkresume batch status. Re-schedules itself if still
-    processing, up to MAX_POLL_ATTEMPTS, then gives up and logs an error
-    (candidate keeps the fallback profile via resolve_candidate_profile
-    until someone investigates).
+    processing, up to MAX_POLL_ATTEMPTS, then gives up, logs an error,
+    and marks the candidate's parsing_status as FAILED (candidate keeps
+    the fallback profile via resolve_candidate_profile until someone
+    investigates and re-triggers parsing).
     """
     try:
         status_data = get_batch_status(batch_id)
@@ -59,11 +71,17 @@ def poll_resume_batch(self, candidate_id: str, batch_id: str, attempt: int = 1):
         logger.error(
             "Polling failed for batch %s (candidate %s): %s", batch_id, candidate_id, exc
         )
+        Candidate.objects.filter(id=candidate_id).update(
+            parsing_status=Candidate.ParsingStatus.FAILED
+        )
         return
 
     resumes = status_data.get("resumes", [])
     if not resumes:
         logger.error("Batch %s returned no resumes entries", batch_id)
+        Candidate.objects.filter(id=candidate_id).update(
+            parsing_status=Candidate.ParsingStatus.FAILED
+        )
         return
 
     resume_entry = resumes[0]
@@ -78,6 +96,9 @@ def poll_resume_batch(self, candidate_id: str, batch_id: str, attempt: int = 1):
             "bulkresume parsing failed for candidate %s: %s",
             candidate_id, resume_entry.get("error_message"),
         )
+        Candidate.objects.filter(id=candidate_id).update(
+            parsing_status=Candidate.ParsingStatus.FAILED
+        )
         return
 
     # status likely "processing" / "pending" — retry unless exhausted
@@ -86,6 +107,9 @@ def poll_resume_batch(self, candidate_id: str, batch_id: str, attempt: int = 1):
             "Gave up polling batch %s for candidate %s after %d attempts "
             "(last status=%s)",
             batch_id, candidate_id, attempt, status,
+        )
+        Candidate.objects.filter(id=candidate_id).update(
+            parsing_status=Candidate.ParsingStatus.FAILED
         )
         return
 
@@ -148,6 +172,10 @@ def _create_profile_from_parsed_data(candidate_id: str, resume_entry: dict) -> N
             "parsed_at": timezone.now(),
             "parser_version": data.get("extraction_method", "bulkresume"),
         },
+    )
+
+    Candidate.objects.filter(id=candidate_id).update(
+        parsing_status=Candidate.ParsingStatus.PARSED
     )
 
     logger.info("Created/updated ResumeProfile for candidate %s from bulkresume", candidate_id)

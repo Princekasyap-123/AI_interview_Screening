@@ -7,6 +7,7 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.contrib.auth.decorators import login_required
 from django.shortcuts import get_object_or_404, render
 from django.views import View
 
@@ -20,19 +21,24 @@ from apps.interviews.serializers import (
 
 logger = logging.getLogger(__name__)
 
+
 class InterviewRoomView(View):
     """
-    GET /api/interviews/<uuid:session_id>/room/  — candidate-facing HTML
-    page. Renders interview_room.html, which contains the frontend JS
-    that calls InterviewSessionJoinInfoView and opens the WebSocket
-    connections. AllowAny-equivalent: plain View has no DRF permission
-    classes, session UUID is the access control (same trust model as
-    InterviewSessionJoinInfoView).
+    GET /api/interviews/<uuid:session_id>/room/<str:access_token>/ —
+    candidate-facing HTML page. Renders interview_room.html.
+
+    access_token is required and validated against the session (not
+    just session_id alone) so a candidate link can't be guessed from a
+    sequential/leaked UUID — matches the trust model already used by
+    InterviewSessionJoinInfoView, just extended with the extra token.
     """
 
-    def get(self, request, session_id):
-        session = get_object_or_404(InterviewSession, id=session_id)
+    def get(self, request, session_id, access_token):
+        session = get_object_or_404(
+            InterviewSession, id=session_id, access_token=access_token
+        )
         return render(request, "interview_room.html", {"session_id": str(session.id)})
+
 
 class InterviewSessionCreateView(APIView):
     """
@@ -46,6 +52,10 @@ class InterviewSessionCreateView(APIView):
     Recruiter-only (IsAuthenticated, per REST_FRAMEWORK default) — a
     candidate should never be able to create their own session with an
     arbitrary max_questions or JD.
+
+    Response now also includes `interview_link` — the full URL the
+    recruiter can copy/send to the candidate, built from access_token
+    (auto-generated on the model's save()).
     """
 
     permission_classes = [IsAuthenticated]
@@ -73,10 +83,11 @@ class InterviewSessionCreateView(APIView):
             "Created interview session %s for candidate %s", session.id, candidate.id
         )
 
-        return Response(
-            InterviewSessionDetailSerializer(session).data,
-            status=status.HTTP_201_CREATED,
-        )
+        data = InterviewSessionDetailSerializer(session).data
+        base_url = getattr(settings, "FRONTEND_BASE_URL", request.build_absolute_uri("/").rstrip("/"))
+        data["interview_link"] = f"{base_url}/interview/{session.id}/{session.access_token}/"
+
+        return Response(data, status=status.HTTP_201_CREATED)
 
 
 class InterviewSessionJoinInfoView(APIView):
@@ -179,3 +190,57 @@ class InterviewSessionListView(APIView):
         page = paginator.paginate_queryset(sessions, request)
         serializer = InterviewSessionSummarySerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
+
+
+@login_required
+def recruiter_dashboard(request):
+    """
+    GET /dashboard/  — plain HTML recruiter dashboard (the template you
+    already have, interviews/dashboard.html). This is a separate,
+    session-authenticated (Django login) surface from the /api/
+    endpoints above, which are DRF/token or Django-session-authenticated
+    APIViews. It renders the same InterviewSession data as
+    InterviewSessionListView/DetailView but as server-rendered HTML for
+    a human recruiter clicking around, not a JSON API consumer.
+
+    Note: session CREATION on this page happens via the dashboard's
+    <script> fetch()'ing InterviewSessionCreateView directly (see
+    dashboard.html) rather than duplicating creation logic here — one
+    source of truth for how a session gets created.
+    """
+    status_filter = request.GET.get("status", "")
+    sessions = InterviewSession.objects.select_related(
+        "candidate", "final_rating", "proctoring_session"
+    ).order_by("-created_at")
+    if status_filter:
+        sessions = sessions.filter(status=status_filter)
+
+    selected_session = None
+    session_id = request.GET.get("session_id")
+    if session_id:
+        selected_session = (
+            InterviewSession.objects.select_related(
+                "candidate", "final_rating", "proctoring_session"
+            )
+            .prefetch_related("questions__answer", "proctoring_session__flags")
+            .filter(id=session_id)
+            .first()
+        )
+
+    interview_link = None
+    if selected_session:
+        base_url = getattr(
+            settings, "FRONTEND_BASE_URL", request.build_absolute_uri("/").rstrip("/")
+        )
+        interview_link = (
+            f"{base_url}/interview/{selected_session.id}/{selected_session.access_token}/"
+        )
+
+    return render(request, "interviews/dashboard.html", {
+        "sessions": sessions,
+        "selected_session": selected_session,
+        "status_filter": status_filter,
+        "status_choices": InterviewSession.Status.choices,
+        "candidates": Candidate.objects.all(),
+        "interview_link": interview_link,
+    })

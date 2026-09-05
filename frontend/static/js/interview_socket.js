@@ -2,10 +2,11 @@
 
 /**
  * Owns the WebSocket connection to InterviewConsumer (apps/interviews/consumers.py).
- * Responsible for: connecting, sending "join"/"answer_submitted", and
- * dispatching incoming "turn"/"info"/"error" messages to whatever UI
- * logic needs them (tts_player.js for speaking, interview_room.html's
- * own script for state transitions).
+ * Responsible for: connecting, sending "join"/"ready_for_question"/
+ * "answer_submitted"/"end_interview", and dispatching incoming
+ * "turn"/"info"/"error" messages to whatever UI logic needs them
+ * (tts_player.js for speaking, interview_room.html's own script for
+ * state transitions).
  *
  * This file does NOT touch the DOM directly — it exposes a small event-
  * style API so interview_room.html can wire up UI reactions without this
@@ -13,7 +14,9 @@
  *
  * Message shapes (must match apps/interviews/consumers.py exactly):
  *   OUT: {"type": "join"}
+ *   OUT: {"type": "ready_for_question"}
  *   OUT: {"type": "answer_submitted", "question_id": "...", "audio_base64": "...", "audio_format": "webm"}
+ *   OUT: {"type": "end_interview"}
  *   IN:  {"type": "turn", "action": "speak_intro"|"speak_question"|"speak_follow_up", "question_id": "...", "text": "..."}
  *   IN:  {"type": "turn", "action": "close_interview", "message": "..."}
  *   IN:  {"type": "info", "message": "..."}
@@ -53,10 +56,7 @@ class InterviewSocket {
       }
     }
   }
-  // Add to InterviewSocket class in interview_socket.js
-sendReadyForQuestion() {
-  this._send({ type: "ready_for_question" });
-  }
+
   // ------------------------------------------------------------------
   // Connection lifecycle
   // ------------------------------------------------------------------
@@ -108,6 +108,10 @@ sendReadyForQuestion() {
     this._send({ type: "join" });
   }
 
+  sendReadyForQuestion() {
+    this._send({ type: "ready_for_question" });
+  }
+
   /**
    * Called by stt_recorder.js once it has a base64-encoded audio blob
    * for the candidate's answer to the current question.
@@ -119,6 +123,16 @@ sendReadyForQuestion() {
       audio_base64: audioBase64,
       audio_format: audioFormat,
     });
+  }
+
+  /**
+   * Called when the candidate clicks "End interview". Server closes
+   * the session (status -> TERMINATED, reason -> CANDIDATE_ENDED) and
+   * responds with a normal close_interview turn, then closes the
+   * socket — see InterviewConsumer._handle_end_interview.
+   */
+  sendEndInterview() {
+    this._send({ type: "end_interview" });
   }
 
   _send(payload) {
@@ -150,9 +164,4 @@ sendReadyForQuestion() {
   }
 }
 
-// Exposed globally for interview_room.html's inline script to use —
-// kept as a plain global rather than an ES module export, matching the
-// non-bundled <script> tag setup implied by the current static/js/
-// folder structure (no build step configured yet).
 window.InterviewSocket = InterviewSocket;
-

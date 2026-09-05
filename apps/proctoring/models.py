@@ -21,10 +21,6 @@ class ProctoringSession(models.Model):
         related_name="proctoring_session",
     )
 
-    # Running count of violations that count toward the warn/terminate
-    # threshold — NOT every flag (e.g. a single momentary "no_face" blip
-    # might be too minor to count; see flag_processor.py for what
-    # actually increments this vs. what's just logged).
     countable_violation_count = models.PositiveSmallIntegerField(default=0)
 
     warning_issued = models.BooleanField(default=False)
@@ -33,10 +29,20 @@ class ProctoringSession(models.Model):
     terminated = models.BooleanField(default=False)
     terminated_at = models.DateTimeField(null=True, blank=True)
 
-    # 0-100 aggregate risk score, computed by risk_scorer.py from all
-    # flags (including non-countable ones) — informational for the
-    # recruiter dashboard, distinct from the binary warn/terminate logic.
     risk_score = models.FloatField(default=0.0)
+
+    # Snapshot captured client-side ~3s after the candidate's camera
+    # starts, before questions begin. Used for two purposes:
+    #   1. Recruiter-facing audit trail — "this is who showed up".
+    #   2. NOT used server-side for live matching — the live face
+    #      descriptor comparison happens entirely client-side in
+    #      proctoring_client.js against an in-memory reference, and
+    #      only the resulting face_mismatch flag (with duration) is
+    #      ever sent here. This field is purely the stored photo.
+    reference_photo = models.ImageField(
+        upload_to="proctoring_reference_photos/%Y/%m/", null=True, blank=True
+    )
+    reference_captured_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -53,8 +59,9 @@ class ProctoringFlag(models.Model):
     """
     A single raw signal from the candidate's browser: tab switch, window
     blur, no face detected, multiple faces, gaze away, fullscreen exit,
-    etc. Every signal is logged here regardless of severity — flag_processor.py
-    decides which ones are "countable" toward termination vs. just noise.
+    face mismatch, etc. Every signal is logged here regardless of
+    severity — flag_processor.py decides which ones are "countable"
+    toward termination vs. just noise.
     """
 
     class FlagType(models.TextChoices):
@@ -66,6 +73,7 @@ class ProctoringFlag(models.Model):
         GAZE_AWAY = "gaze_away", "Gaze directed away from screen"
         COPY_PASTE = "copy_paste", "Copy/paste attempted"
         DEVTOOLS_OPENED = "devtools_opened", "Developer tools opened"
+        FACE_MISMATCH = "face_mismatch", "Face does not match reference photo"
 
     class Severity(models.TextChoices):
         LOW = "low", "Low"
@@ -81,15 +89,8 @@ class ProctoringFlag(models.Model):
     flag_type = models.CharField(max_length=30, choices=FlagType.choices)
     severity = models.CharField(max_length=10, choices=Severity.choices, default=Severity.LOW)
 
-    # Whether this specific flag counted toward countable_violation_count
-    # on the parent session — set by flag_processor.py at creation time,
-    # kept here for audit/debugging so you can see why a candidate was
-    # or wasn't warned for a given event.
     counted_toward_violation = models.BooleanField(default=False)
 
-    # Raw client-reported context, e.g. {"duration_ms": 4200, "url_hint": "..."}
-    # for tab switches, or {"face_count": 2} for multiple_faces. Free-form
-    # on purpose since different flag types carry different metadata.
     metadata = models.JSONField(default=dict, blank=True)
 
     occurred_at = models.DateTimeField()

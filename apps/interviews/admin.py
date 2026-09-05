@@ -59,6 +59,7 @@ class InterviewSessionAdmin(admin.ModelAdmin):
     search_fields = ["candidate__name", "candidate__email", "id"]
     readonly_fields = [
         "id",
+        "access_token",
         "created_at",
         "started_at",
         "ended_at",
@@ -69,7 +70,7 @@ class InterviewSessionAdmin(admin.ModelAdmin):
 
     fieldsets = (
         (None, {
-            "fields": ("id", "candidate", "job_description_text")
+            "fields": ("id", "candidate", "access_token", "job_description_text")
         }),
         ("Status", {
             "fields": (
