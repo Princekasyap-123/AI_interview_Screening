@@ -5,20 +5,13 @@ import logging
 from celery import shared_task
 from django.utils import timezone
 
-from apps.candidates.bulkresume_client import (
-    BulkResumeAPIError,
-    get_batch_status,
-    submit_resume_for_parsing,
-)
+from apps.candidates.bulkresume_client import BulkResumeAPIError, parse_resume
 from apps.candidates.models import Candidate, ResumeProfile
 
 logger = logging.getLogger(__name__)
 
-MAX_POLL_ATTEMPTS = 10
-POLL_RETRY_DELAY_SECONDS = 15
 
-
-@shared_task(bind=True)
+@shared_task(bind=True, max_retries=2, default_retry_delay=20)
 def submit_and_parse_resume(self, candidate_id: str):
     """
     Entry point: triggered automatically by the post_save signal in
@@ -28,11 +21,10 @@ def submit_and_parse_resume(self, candidate_id: str):
     Do not call this directly from a view as well, or the resume gets
     submitted twice (signal already handles every creation path).
 
-    Submits the file to the bulkresume service and kicks off polling.
-    parsing_status is already set to PENDING by the signal before this
-    task runs; here we only need to move it to FAILED on a submission
-    error, since the polling task owns the PARSED/FAILED transitions
-    for everything after that point.
+    Uses the new synchronous /resumes/parse/ endpoint — no batch_id or
+    polling needed anymore, this single call submits the file and
+    returns the parsed result directly. Retries up to 2 times on
+    transient API failures before marking parsing_status as FAILED.
     """
     candidate = Candidate.objects.filter(id=candidate_id).first()
     if candidate is None or not candidate.resume_file:
@@ -43,115 +35,54 @@ def submit_and_parse_resume(self, candidate_id: str):
         return
 
     try:
-        batch_id = submit_resume_for_parsing(candidate.resume_file)
+        result = parse_resume(candidate.resume_file)
     except BulkResumeAPIError as exc:
-        logger.error("Failed to submit resume for candidate %s: %s", candidate_id, exc)
-        Candidate.objects.filter(id=candidate_id).update(
-            parsing_status=Candidate.ParsingStatus.FAILED
-        )
-        return
+        logger.error("Resume parsing failed for candidate %s: %s", candidate_id, exc)
 
-    poll_resume_batch.apply_async(
-        args=[candidate_id, batch_id], countdown=POLL_RETRY_DELAY_SECONDS
-    )
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc)
 
-
-@shared_task(bind=True)
-def poll_resume_batch(self, candidate_id: str, batch_id: str, attempt: int = 1):
-    """
-    Polls the bulkresume batch status. Re-schedules itself if still
-    processing, up to MAX_POLL_ATTEMPTS, then gives up, logs an error,
-    and marks the candidate's parsing_status as FAILED (candidate keeps
-    the fallback profile via resolve_candidate_profile until someone
-    investigates and re-triggers parsing).
-    """
-    try:
-        status_data = get_batch_status(batch_id)
-    except BulkResumeAPIError as exc:
         logger.error(
-            "Polling failed for batch %s (candidate %s): %s", batch_id, candidate_id, exc
+            "Gave up parsing resume for candidate %s after %d attempts",
+            candidate_id, self.request.retries + 1,
         )
         Candidate.objects.filter(id=candidate_id).update(
             parsing_status=Candidate.ParsingStatus.FAILED
         )
         return
 
-    resumes = status_data.get("resumes", [])
-    if not resumes:
-        logger.error("Batch %s returned no resumes entries", batch_id)
-        Candidate.objects.filter(id=candidate_id).update(
-            parsing_status=Candidate.ParsingStatus.FAILED
-        )
-        return
-
-    resume_entry = resumes[0]
-    status = resume_entry.get("status")
-
-    if status == "done":
-        _create_profile_from_parsed_data(candidate_id, resume_entry)
-        return
-
-    if status == "error":
-        logger.error(
-            "bulkresume parsing failed for candidate %s: %s",
-            candidate_id, resume_entry.get("error_message"),
-        )
-        Candidate.objects.filter(id=candidate_id).update(
-            parsing_status=Candidate.ParsingStatus.FAILED
-        )
-        return
-
-    # status likely "processing" / "pending" — retry unless exhausted
-    if attempt >= MAX_POLL_ATTEMPTS:
-        logger.error(
-            "Gave up polling batch %s for candidate %s after %d attempts "
-            "(last status=%s)",
-            batch_id, candidate_id, attempt, status,
-        )
-        Candidate.objects.filter(id=candidate_id).update(
-            parsing_status=Candidate.ParsingStatus.FAILED
-        )
-        return
-
-    poll_resume_batch.apply_async(
-        args=[candidate_id, batch_id],
-        kwargs={"attempt": attempt + 1},
-        countdown=POLL_RETRY_DELAY_SECONDS,
-    )
+    _create_profile_from_parsed_data(candidate_id, result)
 
 
-def _create_profile_from_parsed_data(candidate_id: str, resume_entry: dict) -> None:
+def _create_profile_from_parsed_data(candidate_id: str, result: dict) -> None:
     """
-    Maps the bulkresume parsed "data" shape onto ResumeProfile fields.
+    Maps the new /resumes/parse/ response shape onto ResumeProfile
+    fields.
 
-    Mapping notes (bulkresume field -> ResumeProfile field):
-    - data.skills            -> skills (direct copy, already a flat list)
-    - data.experience        -> recent_projects (repurposed: bulkresume
-                                 returns JOB history, not side-projects —
-                                 mapped as {"title": f"{title} at {company}",
-                                 "description": description} so the LLM
-                                 prompt still gets meaningful work history
-                                 context, since ResumeProfile has no
-                                 separate "work_experience" field)
-    - experience durations   -> experience_years (approximated by
-                                 counting distinct experience entries'
-                                 date ranges is unreliable from free text
-                                 like "Mar 2024 - Present"; NOT parsed
-                                 here, left null — see wiring note)
-    - (nothing in response)  -> role_level (bulkresume doesn't infer
-                                 this at all; left blank, needs separate
-                                 logic if you want it auto-set)
-    - data (full dict)       -> raw_resume_text (stored as-is for
-                                 reference/debugging, not the actual
-                                 raw text since bulkresume doesn't
-                                 return unparsed text in this response)
+    Mapping notes (API field -> ResumeProfile field):
+    - data.skills          -> skills (direct copy)
+    - data.experience      -> recent_projects (repurposed: this is JOB
+                               history, not side-projects — mapped as
+                               {"title": f"{title} at {company}",
+                               "description": description})
+    - experience_years     -> still NOT populated (no reliable signal
+                               in the response)
+    - role_level           -> still NOT populated, same reason
+
+    NEW fields in this response with no dedicated model field yet:
+    candidate_address, pincode_postal_code, hobbies, training, gender,
+    date_of_birth, marital_status, father_name, mother_name,
+    known_languages, other_urls, certifications, internships,
+    parse_score, ocr_deep_dive_used — all currently only captured
+    inside raw_resume_text (full data dict as a string), not queryable
+    individually. Flag if you want dedicated fields for these.
     """
     candidate = Candidate.objects.filter(id=candidate_id).first()
     if candidate is None:
         logger.error("_create_profile_from_parsed_data: candidate %s not found", candidate_id)
         return
 
-    data = resume_entry.get("data", {})
+    data = result.get("data", {})
 
     recent_projects = [
         {
@@ -165,12 +96,12 @@ def _create_profile_from_parsed_data(candidate_id: str, resume_entry: dict) -> N
         candidate=candidate,
         defaults={
             "skills": data.get("skills", []),
-            "experience_years": None,  # see mapping note above
-            "role_level": "",  # see mapping note above
+            "experience_years": None,
+            "role_level": "",
             "recent_projects": recent_projects,
             "raw_resume_text": str(data),
             "parsed_at": timezone.now(),
-            "parser_version": data.get("extraction_method", "bulkresume"),
+            "parser_version": data.get("extraction_method", "resume_parse_v2"),
         },
     )
 
@@ -178,4 +109,7 @@ def _create_profile_from_parsed_data(candidate_id: str, resume_entry: dict) -> N
         parsing_status=Candidate.ParsingStatus.PARSED
     )
 
-    logger.info("Created/updated ResumeProfile for candidate %s from bulkresume", candidate_id)
+    logger.info(
+        "Created/updated ResumeProfile for candidate %s (parse_score=%s)",
+        candidate_id, data.get("parse_score"),
+    )

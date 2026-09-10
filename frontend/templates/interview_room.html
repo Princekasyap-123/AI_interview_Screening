@@ -12,9 +12,12 @@
      multiple-faces / gaze-away detection. deferred so a slow/blocked
      CDN never blocks the rest of the page's scripts (in particular
      boot(), which starts the candidate's camera) — these are only
-     needed once proctoringClient.startFaceMesh() actually runs. -->
+     needed once proctoringClient.startFaceMesh() actually runs.
+     NOTE: camera_utils.js is intentionally NOT loaded — proctoring_client.js
+     no longer uses MediaPipe's Camera helper (it was opening a second,
+     conflicting camera stream on top of WebRTCClient's). Frames are now
+     pumped manually from the existing video element instead. -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" defer></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" defer></script>
 
 <!-- face-api.js — used by proctoring_client.js for identity/face-match
      detection (reference photo + live descriptor comparison). -->

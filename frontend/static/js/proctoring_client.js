@@ -20,8 +20,9 @@
  *   IN:  {"type": "error", "message": "..."}
  *
  * MediaPipe Face Mesh and face-api.js are loaded via CDN script tags in
- * interview_room.html — this file assumes `FaceMesh`, `Camera`, and
- * `faceapi` globals exist on window.
+ * interview_room.html — this file assumes `FaceMesh` and `faceapi`
+ * globals exist on window. (The MediaPipe `Camera` helper is NOT used
+ * — see startFaceMesh() below for why.)
  *
  * NOTE on face-api.js model weights: loaded from a CDN mirror below.
  * If that mirror ever becomes unreachable, download the weight files
@@ -71,7 +72,8 @@ class ProctoringClient {
     };
 
     this._faceMesh = null;
-    this._camera = null;
+    this._faceMeshLoopActive = false;
+    this._faceMeshRAF = null;
     this._videoElement = null;
     this._lastFaceCheckState = { faceCount: 1, gazeAway: false };
 
@@ -265,11 +267,17 @@ class ProctoringClient {
   // MediaPipe Face Mesh — no-face / multiple-faces / gaze-away detection
   // ------------------------------------------------------------------
 
+  /**
+   * videoElement MUST already have a live stream attached (i.e. call
+   * this AFTER WebRTCClient.init(videoElement) has resolved). This
+   * reads frames from that existing stream — it does not request the
+   * camera itself.
+   */
   startFaceMesh(videoElement) {
-    if (typeof FaceMesh === "undefined" || typeof Camera === "undefined") {
+    if (typeof FaceMesh === "undefined") {
       console.error(
-        "[ProctoringClient] MediaPipe FaceMesh/Camera not found on window — " +
-        "make sure the CDN scripts are included in interview_room.html."
+        "[ProctoringClient] MediaPipe FaceMesh not found on window — " +
+        "make sure the CDN script is included in interview_room.html."
       );
       return;
     }
@@ -290,22 +298,42 @@ class ProctoringClient {
 
     this._faceMesh.onResults((results) => this._onFaceMeshResults(results));
 
-    this._camera = new Camera(videoElement, {
-      onFrame: async () => {
-        await this._faceMesh.send({ image: videoElement });
-      },
-      width: 640,
-      height: 480,
-    });
+    // NOTE: we deliberately do NOT use MediaPipe's `Camera` helper here.
+    // `Camera` calls getUserMedia() itself, opening a SECOND camera
+    // stream on top of the one WebRTCClient already opened for the
+    // self-view video. That either fails outright (device already in
+    // use -> camera/mic permission error) or silently swaps
+    // videoElement.srcObject to a brand new stream, which is why
+    // reference photo capture could still succeed (it runs once, early)
+    // while live checks afterward degraded and eventually caused a
+    // termination.
+    //
+    // Instead, pump frames straight from the EXISTING video element
+    // that WebRTCClient already attached its stream to — zero extra
+    // getUserMedia calls, one single shared stream for self-view,
+    // face mesh, and face match.
+    this._faceMeshLoopActive = true;
+    const pump = async () => {
+      if (!this._faceMeshLoopActive) return;
+      if (videoElement.readyState >= 2 && videoElement.videoWidth > 0) {
+        try {
+          await this._faceMesh.send({ image: videoElement });
+        } catch (err) {
+          console.error("[ProctoringClient] face mesh send failed:", err);
+        }
+      }
+      this._faceMeshRAF = requestAnimationFrame(pump);
+    };
+    pump();
 
-    this._camera.start();
-    console.log("[ProctoringClient] face mesh started");
+    console.log("[ProctoringClient] face mesh started (shared stream, no extra camera request)");
   }
 
   _stopFaceMesh() {
-    if (this._camera) {
-      this._camera.stop();
-      this._camera = null;
+    this._faceMeshLoopActive = false;
+    if (this._faceMeshRAF) {
+      cancelAnimationFrame(this._faceMeshRAF);
+      this._faceMeshRAF = null;
     }
     this._faceMesh = null;
     if (this._devtoolsCheckInterval) {
