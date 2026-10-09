@@ -471,6 +471,70 @@
   .proctoring-log-row .row-title { font-weight: 500; font-size: 12.5px; }
   .proctoring-log-row .row-detail { color: var(--text-dim); font-size: 11.5px; }
 
+  /* ---------- AI interviewer avatar (avatar_player.js) ---------- */
+  .avatar-stage { position: absolute; inset: 0; z-index: 0; display: none; overflow: hidden; }
+  .ai-panel.avatar-ready .avatar-stage { display: block; }
+  .ai-panel.avatar-ready .ai-mark { display: none; }
+
+  /* Canvas rendered by avatar_player.js (960 x 720 backing store, 4:3).
+     object-fit keeps it filling the panel at any size; all motion
+     (lips, blinks, head movement) is drawn by JS, not CSS. */
+  .avatar-character {
+    position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+    object-fit: cover;
+  }
+  .avatar-shade {
+    position: absolute; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(ellipse at 50% 40%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.35) 100%),
+      linear-gradient(to top, rgba(10,12,16,0.92) 0%, rgba(10,12,16,0.55) 18%, rgba(10,12,16,0) 36%);
+  }
+
+  .ai-panel.avatar-ready {
+    border-radius: 10px;
+    box-shadow: 0 18px 40px rgba(0,0,0,0.45);
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  }
+  .ai-panel.avatar-ready.speaking {
+    border-color: var(--accent-bright);
+    box-shadow: 0 0 0 1px rgba(91,138,118,0.45), 0 18px 48px rgba(59,95,82,0.45);
+  }
+  .ai-panel.avatar-ready .panel-label {
+    z-index: 3; color: #fff; font-weight: 500;
+    background: rgba(10,12,16,0.55);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    padding: 5px 11px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.12);
+  }
+  .ai-panel.avatar-ready .ai-caption {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 3;
+    max-width: none; text-align: left;
+    padding: 14px 18px 16px; font-size: 15px; line-height: 1.45;
+    max-height: 36%; overflow-y: auto;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+  }
+
+  .ai-speaking-badge {
+    position: absolute; top: 12px; right: 14px; z-index: 3;
+    display: none; align-items: center; gap: 3px;
+    padding: 6px 10px; border-radius: 999px;
+    background: rgba(59,95,82,0.85);
+    border: 1px solid rgba(169,209,191,0.4);
+    color: #fff; font-size: 11.5px; font-weight: 500;
+  }
+  .ai-speaking-badge i {
+    width: 3px; height: 10px; border-radius: 2px; background: #CFE8DC;
+    transform-origin: bottom; animation: av-eq 0.9s ease-in-out infinite;
+  }
+  .ai-speaking-badge i:nth-child(2) { animation-delay: 0.15s; }
+  .ai-speaking-badge i:nth-child(3) { animation-delay: 0.3s; }
+  .ai-speaking-badge span { margin-left: 5px; }
+  .ai-panel.avatar-ready.speaking .ai-speaking-badge { display: flex; }
+  @keyframes av-eq {
+    0%, 100% { transform: scaleY(0.35); }
+    50%      { transform: scaleY(1); }
+  }
+
   @media (max-width: 640px) {
     .stage { grid-template-columns: 1fr; }
     .cand-panel { aspect-ratio: 16 / 10; }
@@ -486,7 +550,12 @@
 
   <div class="stage">
     <div class="panel ai-panel" id="aiPanel">
+      <div class="avatar-stage" id="avatarStage"
+           data-avatar-base="{% static 'img/avatar/interviewer_base.webp' %}"
+           data-avatar-mouth="{% static 'img/avatar/interviewer_mouth.webp' %}"
+           data-avatar-blink="{% static 'img/avatar/interviewer_blink.webp' %}"></div>
       <div class="panel-label">AI Interviewer</div>
+      <div class="ai-speaking-badge"><i></i><i></i><i></i><span>Speaking</span></div>
       <div class="ai-mark">WF</div>
       <div class="ai-caption" id="aiCaption">Getting ready…</div>
     </div>
@@ -540,6 +609,7 @@
 <script src="{% static 'js/proctoring_client.js' %}"></script>
 <script src="{% static 'js/proctoring_notifications.js' %}"></script>
 <script src="{% static 'js/tts_player.js' %}"></script>
+<script src="{% static 'js/avatar_player.js' %}"></script>
 
 <script>
 const aiPanel = document.getElementById('aiPanel');
@@ -630,6 +700,12 @@ const ttsPlayer = new TTSPlayer();
 const interviewSocket = new InterviewSocket(SESSION_ID);
 const proctoringClient = new ProctoringClient(SESSION_ID);
 
+// Avatar loads its three images, then swaps in for the WF mark. Any
+// failure keeps the WF mark and every avatarPlayer call becomes a no-op.
+const avatarPlayer = new AvatarPlayer();
+avatarPlayer.mount(document.getElementById('avatarStage'), aiPanel)
+  .catch((avatarErr) => console.warn('[avatar] failed to mount, keeping WF mark:', avatarErr));
+
 let currentQuestionId = null;
 let micMuted = false;
 let isCompanyIntro = false;
@@ -709,11 +785,17 @@ interviewSocket.on('error', (message) => {
   statusText.textContent = message;
 });
 
-ttsPlayer.on('speakStart', () => {
+ttsPlayer.on('speakStart', (text) => {
   setUiState('speaking');
+  avatarPlayer.speakStart(text, ttsPlayer.rate);
 });
 
-ttsPlayer.on('speakEnd', () => {
+ttsPlayer.on('wordBoundary', ({ charIndex }) => {
+  avatarPlayer.onBoundary(charIndex);
+});
+
+ttsPlayer.on('speakEnd', (text) => {
+  avatarPlayer.speakEnd(text);
   if (isCompanyIntro) {
     isCompanyIntro = false;
     interviewSocket.sendReadyForQuestion();
@@ -721,6 +803,7 @@ ttsPlayer.on('speakEnd', () => {
   }
   if (!currentQuestionId || micMuted) return;
   setUiState('listening');
+  avatarPlayer.setListening(true);
   sttRecorder.startRecording();
   doneAnsweringBtn.style.display = 'inline-block';
 });
@@ -851,6 +934,7 @@ function cleanupAllMedia() {
   sttRecorder.release();
   webrtcClient.release();
   ttsPlayer.stop();
+  avatarPlayer.stop();
 }
 
 window.addEventListener('beforeunload', cleanupAllMedia);

@@ -21,10 +21,18 @@ class TTSPlayer {
   constructor() {
     this.synth = window.speechSynthesis;
     this.voice = null;
+
+    // Speaking style. A slightly slower rate sounds more composed and
+    // professional, and gives the avatar's lip-sync room to read well.
+    // avatar_player.js receives this rate in speakStart(), so if you
+    // change it here the mouth pace follows automatically.
+    this.rate = 0.9;
+    this.pitch = 1.0;
     this.listeners = {
-      speakStart: [],  // fn(text)
-      speakEnd: [],    // fn(text)
-      speakError: [],  // fn(error)
+      speakStart: [],    // fn(text)
+      speakEnd: [],      // fn(text)
+      speakError: [],    // fn(error)
+      wordBoundary: [],  // fn({ charIndex, text }) — avatar lip-sync resync
     };
 
     if (!this.synth) {
@@ -65,27 +73,63 @@ class TTSPlayer {
   _loadPreferredVoice() {
     if (!this.synth) return;
 
+    // The avatar is a woman, so only female voices are considered.
+    // Ordered best-first. Names differ per browser/OS:
+    //   - "...Online (Natural)" voices are Microsoft neural voices, available
+    //     in Microsoft Edge (most natural and professional sounding).
+    //   - "Google ..." voices come with Chrome.
+    //   - The rest are OS-installed voices (Windows / macOS).
+    // Neerja / Heera are Indian-English voices, a natural fit for
+    // candidates in India.
+    const preferredNames = [
+      "Microsoft Neerja Online (Natural) - English (India)",
+      "Microsoft Aria Online (Natural) - English (United States)",
+      "Microsoft Jenny Online (Natural) - English (United States)",
+      "Microsoft Sonia Online (Natural) - English (United Kingdom)",
+      "Google UK English Female",
+      "Google US English",
+      "Microsoft Heera - English (India)",
+      "Samantha",
+      "Microsoft Zira - English (United States)",
+    ];
+
+    // Voices that are known to be male — never used for this avatar.
+    const maleHints = [
+      "male", "david", "mark", "guy", "ryan", "prabhat", "ravi",
+      "george", "daniel", "alex", "fred", "thomas", "james", "christopher",
+    ];
+    const isMale = (v) => {
+      const n = v.name.toLowerCase();
+      if (n.includes("female")) return false;
+      return maleHints.some((h) => n.includes(h));
+    };
+
     const pickVoice = () => {
       const voices = this.synth.getVoices();
       if (voices.length === 0) return;
 
-      // Prefer a natural-sounding English voice if available — exact
-      // names vary by OS/browser (e.g. "Google US English", "Microsoft
-      // Aria Online"), so this is a soft preference list, not a
-      // guarantee. Falls back to whatever default voice the browser
-      // provides if none of these match.
-      const preferredNames = [
-        "Google US English",
-        "Microsoft Aria Online (Natural)",
-        "Samantha",
-      ];
+      let chosen = null;
+      for (const name of preferredNames) {
+        // startsWith, because some browsers append extra text to the name.
+        chosen = voices.find((v) => v.name === name || v.name.startsWith(name));
+        if (chosen) break;
+      }
 
-      this.voice =
-        voices.find((v) => preferredNames.includes(v.name)) ||
-        voices.find((v) => v.lang === "en-US") ||
-        voices[0];
+      if (!chosen) {
+        const english = voices.filter((v) => /^en[-_]/i.test(v.lang) && !isMale(v));
+        chosen =
+          english.find((v) => /^en[-_]IN/i.test(v.lang)) ||
+          english.find((v) => /^en[-_]GB/i.test(v.lang)) ||
+          english.find((v) => /^en[-_]US/i.test(v.lang)) ||
+          english[0] ||
+          voices[0];
+      }
 
-      console.log("[TTSPlayer] selected voice:", this.voice ? this.voice.name : "none");
+      this.voice = chosen;
+      console.log(
+        "[TTSPlayer] selected voice:",
+        this.voice ? `${this.voice.name} (${this.voice.lang})` : "none"
+      );
     };
 
     // Voices load asynchronously in some browsers (notably Chrome) —
@@ -133,8 +177,8 @@ class TTSPlayer {
     if (this.voice) {
       utterance.voice = this.voice;
     }
-    utterance.rate = 1.0;
-    utterance.pitch = 1.0;
+    utterance.rate = this.rate;
+    utterance.pitch = this.pitch;
 
     utterance.addEventListener("start", () => {
       console.log("[TTSPlayer] speaking:", text.slice(0, 60));
@@ -153,6 +197,14 @@ class TTSPlayer {
       // after AI finishes speaking") doesn't hang forever if TTS fails
       // partway through.
       this._emit("speakEnd", text);
+    });
+
+    // Word-level timing for the avatar's lip-sync. Several Chrome
+    // network voices never fire this, so avatar_player.js treats it as
+    // an optional resync on top of its own text-paced estimate.
+    utterance.addEventListener("boundary", (event) => {
+      if (event.name && event.name !== "word") return;
+      this._emit("wordBoundary", { charIndex: event.charIndex, text });
     });
 
     this.synth.speak(utterance);

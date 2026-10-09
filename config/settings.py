@@ -20,7 +20,11 @@ if not SECRET_KEY:
 DEBUG = os.environ.get("DJANGO_DEBUG", "False") == "True"
 
 ALLOWED_HOSTS = [
-    h.strip() for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    h.strip()
+    for h in os.environ.get(
+        "DJANGO_ALLOWED_HOSTS",
+        "localhost,127.0.0.1,ardently-dingo-designed.ngrok-free.dev"
+    ).split(",")
     if h.strip()
 ]
 
