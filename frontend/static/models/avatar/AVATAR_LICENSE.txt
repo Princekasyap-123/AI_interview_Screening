@@ -1,0 +1,5 @@
+interviewer3d.glb is the "mpfb.glb" example avatar from TalkingHead
+(https://github.com/met4citizen/TalkingHead), created with Blender + MPFB,
+licensed CC0 (public domain). Compressed for the web (WebP textures,
+meshopt geometry) with glTF-Transform. The T-shirt is recoloured at runtime
+by avatar3d_player.js.

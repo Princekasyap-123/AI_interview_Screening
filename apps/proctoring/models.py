@@ -74,7 +74,9 @@ class ProctoringFlag(models.Model):
         COPY_PASTE = "copy_paste", "Copy/paste attempted"
         DEVTOOLS_OPENED = "devtools_opened", "Developer tools opened"
         FACE_MISMATCH = "face_mismatch", "Face does not match reference photo"
-
+        PHONE_DETECTED = "phone_detected", "Mobile phone visible"
+        NOTES_DETECTED = "notes_detected", "Notes or book visible"
+        READING_SUSPECTED = "reading_suspected", "Possibly reading from outside the screen"
     class Severity(models.TextChoices):
         LOW = "low", "Low"
         MEDIUM = "medium", "Medium"

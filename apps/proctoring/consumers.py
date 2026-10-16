@@ -2,8 +2,8 @@
 
 import base64
 import logging
+import time
 
-from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.core.files.base import ContentFile
@@ -11,7 +11,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.interviews.models import InterviewSession
-from apps.proctoring.models import ProctoringFlag, ProctoringSession
+from apps.proctoring.models import ProctoringSession
 from apps.proctoring.services.risk_scorer import (
     ProctoringActionResult,
     get_or_create_proctoring_session,
@@ -20,38 +20,33 @@ from apps.proctoring.services.risk_scorer import (
 
 logger = logging.getLogger(__name__)
 
-# Cap on the reference photo payload — a single JPEG snapshot should be
-# well under this; generous ceiling just to reject anything malformed.
 MAX_REFERENCE_PHOTO_BYTES = 3 * 1024 * 1024
+
+# Drop a repeat of the same flag type arriving faster than this. Real
+# detections are never this frequent; this only protects the DB from a
+# misbehaving client sending one event per video frame.
+MIN_FLAG_INTERVAL_SECONDS = 1.0
 
 
 class ProctoringConsumer(AsyncJsonWebsocketConsumer):
     """
-    Receives raw proctoring signals from proctoring_client.js (tab
-    switches, blur, face-mesh results, fullscreen exits, face-match
-    checks, etc.) for a single interview session, and relays back only
-    what the candidate is allowed to see: a warning on strike 1, or
-    nothing at all (silent logging) otherwise.
+    Receives raw proctoring signals from proctoring_client.js and relays
+    back only what the candidate may see.
 
-    On strike 2 (terminate), this consumer also pushes the interview's
-    CLOSE_INTERVIEW turn into the interview's own channel group.
-
-    Expected incoming message shapes (from proctoring_client.js):
+    Incoming:
       {"type": "flag", "flag_type": "tab_switch", "metadata": {"duration_ms": 2100}}
       {"type": "reference_photo", "image_base64": "...", "image_format": "jpeg"}
 
-    Outgoing message shapes:
-      {"type": "warning", "message": "..."}
-      {"type": "terminated", "message": "..."}
+    Outgoing:
+      {"type": "warning", "message": "...", "flag_type": "...", "count": 2, "limit": 4}
+      {"type": "terminated", "message": "...", "flag_type": "..."}
       {"type": "error", "message": "..."}
-      (silent for non-countable or first-of-nothing flags, and for a
-      successfully stored reference_photo — the client doesn't need an
-      ack to proceed, it just starts its grace-window timer locally)
     """
 
     async def connect(self):
         self.session_id = self.scope["url_route"]["kwargs"]["session_id"]
         self.interview_session = await self._get_interview_session(self.session_id)
+        self._last_flag_at = {}
 
         if self.interview_session is None:
             logger.warning(
@@ -105,6 +100,12 @@ class ProctoringConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json({"type": "error", "message": "Missing flag_type."})
             return
 
+        now = time.monotonic()
+        last = self._last_flag_at.get(flag_type)
+        if last is not None and (now - last) < MIN_FLAG_INTERVAL_SECONDS:
+            return
+        self._last_flag_at[flag_type] = now
+
         try:
             result = await self._process_flag_locked(flag_type, metadata)
         except ValueError as exc:
@@ -143,10 +144,20 @@ class ProctoringConsumer(AsyncJsonWebsocketConsumer):
 
     async def _relay_result(self, result: ProctoringActionResult):
         if result.action == ProctoringActionResult.ACTION_WARN:
-            await self.send_json({"type": "warning", "message": result.message})
+            await self.send_json({
+                "type": "warning",
+                "message": result.message,
+                "flag_type": result.flag_type,
+                "count": result.count,
+                "limit": result.limit,
+            })
 
         elif result.action == ProctoringActionResult.ACTION_TERMINATE:
-            await self.send_json({"type": "terminated", "message": result.message})
+            await self.send_json({
+                "type": "terminated",
+                "message": result.message,
+                "flag_type": result.flag_type,
+            })
 
             await self.channel_layer.group_send(
                 self.interview_group_name,
@@ -157,18 +168,10 @@ class ProctoringConsumer(AsyncJsonWebsocketConsumer):
             )
 
     # ------------------------------------------------------------------
-    # Reference photo handling
+    # Reference photo handling (unchanged)
     # ------------------------------------------------------------------
 
     async def _handle_reference_photo(self, content):
-        """
-        Stores the candidate's start-of-interview snapshot for the
-        recruiter dashboard's audit trail. This is purely a stored
-        image — it plays NO role in live face-match detection, which
-        happens entirely client-side (proctoring_client.js keeps its
-        own in-memory descriptor and only ever sends the resulting
-        face_mismatch flag, same as any other detector here).
-        """
         image_base64 = content.get("image_base64")
         image_format = content.get("image_format", "jpeg")
 

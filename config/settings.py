@@ -9,6 +9,10 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+
+import mimetypes
+mimetypes.add_type("text/javascript", ".mjs", True)
+
 # ---------------------------------------------------------------------
 # Core / security
 # ---------------------------------------------------------------------
@@ -256,3 +260,6 @@ LOGGING = {
     },
 }
 LOGIN_URL = "/admin/login/"
+
+KOKORO_VOICE = "bf_emma"
+

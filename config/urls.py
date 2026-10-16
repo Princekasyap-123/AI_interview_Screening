@@ -9,6 +9,7 @@ from apps.interviews.views import InterviewRoomView
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("api/avatar/", include("apps.avatar.urls")),
 
     path("api/candidates/", include("apps.candidates.urls")),
     path("api/interviews/", include("apps.interviews.urls")),

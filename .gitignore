@@ -42,3 +42,9 @@ Thumbs.db
 
 # ---- Node (if you ever add a build step for frontend) ----
 node_modules/
+# AI model files
+# AI model files - keep locally, do not push to GitHub
+models/kokoro/*.onnx
+models/kokoro/*.bin
+frontend/static/models/**/*.onnx
+frontend/static/models/**/*.bin
