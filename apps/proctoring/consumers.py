@@ -168,6 +168,19 @@ class ProctoringConsumer(AsyncJsonWebsocketConsumer):
             )
 
     # ------------------------------------------------------------------
+    # Group event: the INTERVIEW side ended the session for a rule
+    # violation (abusive language in an answer) — show the candidate the
+    # same "interview ended" screen as a proctoring termination.
+    # ------------------------------------------------------------------
+
+    async def proctoring_notify_terminated(self, event):
+        await self.send_json({
+            "type": "terminated",
+            "message": event.get("message", ""),
+            "flag_type": event.get("flag_type", ""),
+        })
+
+    # ------------------------------------------------------------------
     # Reference photo handling (unchanged)
     # ------------------------------------------------------------------
 
@@ -206,9 +219,9 @@ class ProctoringConsumer(AsyncJsonWebsocketConsumer):
         if not image_bytes:
             raise ValueError("Decoded reference photo is empty.")
 
-        proctoring_session = ProctoringSession.objects.get(
-            interview_session_id=self.session_id
-        )
+        proctoring_session = ProctoringSession.objects.select_related(
+            "interview_session"
+        ).get(interview_session_id=self.session_id)
 
         safe_format = "".join(c for c in image_format if c.isalnum()) or "jpeg"
         proctoring_session.reference_photo.save(
@@ -220,6 +233,12 @@ class ProctoringConsumer(AsyncJsonWebsocketConsumer):
         proctoring_session.save(
             update_fields=["reference_photo", "reference_captured_at", "updated_at"]
         )
+
+        # Attire check (white-collar only, informational) — reuses this
+        # same frame, no extra browser capture needed. See attire_checker.py.
+        if proctoring_session.interview_session.is_white_collar:
+            from apps.proctoring.services.attire_checker import check_attire_in_background
+            check_attire_in_background(self.session_id, image_base64)
 
     # ------------------------------------------------------------------
     # Setup helpers

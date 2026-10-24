@@ -49,6 +49,29 @@
   let canvas = null;
   let ctx = null;
   let inputSize = 416;
+  // If the worker (GPU context loss, OOM, a dropped message, etc.) ever
+  // goes silent on a call, that call's promise must still settle —
+  // otherwise whatever is awaiting detect() hangs forever and the
+  // caller's own poll loop (proctoring_client.js's tick()) never
+  // schedules its next check again. CALL_TIMEOUT_MS guarantees that.
+  const CALL_TIMEOUT_MS = 8000;
+  // "load" downloads the .onnx model and runs a warm-up pass, which can
+  // legitimately take far longer than a single detect() call, so it gets
+  // its own, longer timeout. Otherwise a slow first load would be killed
+  // by the 8s detect timeout and retried in a loop.
+  const LOAD_TIMEOUT_MS = 60000;
+
+  function resetWorker(reason) {
+    if (worker) {
+      try { worker.terminate(); } catch (e) { /* already dead */ }
+    }
+    worker = null;
+    loadPromise = null; // so the next load()/detect() spins up a fresh worker + model
+    const err = new Error("[ObjectDetector] worker reset: " + reason);
+    pending.forEach((p) => { clearTimeout(p.timer); p.reject(err); });
+    pending.clear();
+    console.warn("[ObjectDetector] worker reset:", reason);
+  }
 
   function getWorker() {
     if (worker) return worker;
@@ -63,22 +86,38 @@
       const p = pending.get(msg.id);
       if (!p) return;
       pending.delete(msg.id);
+      clearTimeout(p.timer);
       if (msg.type === "error") p.reject(new Error(msg.message));
       else p.resolve(msg);
     };
     worker.onerror = (e) => {
-      const err = new Error("[ObjectDetector] worker error: " + (e.message || "unknown"));
-      pending.forEach((p) => p.reject(err));
-      pending.clear();
+      resetWorker(e.message || "unknown worker error");
     };
     return worker;
   }
 
-  function call(payload, transfer) {
+  function call(payload, transfer, timeoutMs) {
+    const limit = timeoutMs || CALL_TIMEOUT_MS;
     return new Promise((resolve, reject) => {
       const id = nextId++;
-      pending.set(id, { resolve, reject });
-      getWorker().postMessage(Object.assign({ id }, payload), transfer || []);
+      const entry = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          if (!pending.has(id)) return;
+          pending.delete(id);
+          resetWorker("no response within " + limit + "ms");
+          reject(new Error("[ObjectDetector] worker call timed out"));
+        }, limit),
+      };
+      pending.set(id, entry);
+      try {
+        getWorker().postMessage(Object.assign({ id }, payload), transfer || []);
+      } catch (err) {
+        clearTimeout(entry.timer);
+        pending.delete(id);
+        reject(err);
+      }
     });
   }
 
@@ -114,17 +153,27 @@
     async detect(input, maxNumBoxes = 20, minScore = 0.3) {
       const frame = capture(input);
       if (!frame) return [];
-      const res = await call({ type: "detect", data: frame.data, minScore, maxNumBoxes }, [frame.data]);
-      model.lastInferMs = res.inferMs;
-      return (res.predictions || [])
-        .map((p) => {
-          const x = Math.max(0, p.bbox[0] / frame.ratio);
-          const y = Math.max(0, p.bbox[1] / frame.ratio);
-          const w = Math.min(frame.sw - x, p.bbox[2] / frame.ratio);
-          const h = Math.min(frame.sh - y, p.bbox[3] / frame.ratio);
-          return { class: p.class, score: p.score, bbox: [x, y, w, h] };
-        })
-        .filter((p) => p.bbox[2] > 0 && p.bbox[3] > 0);
+      try {
+        const res = await call({ type: "detect", data: frame.data, minScore, maxNumBoxes }, [frame.data]);
+        model.lastInferMs = res.inferMs;
+        return (res.predictions || [])
+          .map((p) => {
+            const x = Math.max(0, p.bbox[0] / frame.ratio);
+            const y = Math.max(0, p.bbox[1] / frame.ratio);
+            const w = Math.min(frame.sw - x, p.bbox[2] / frame.ratio);
+            const h = Math.min(frame.sh - y, p.bbox[3] / frame.ratio);
+            return { class: p.class, score: p.score, bbox: [x, y, w, h] };
+          })
+          .filter((p) => p.bbox[2] > 0 && p.bbox[3] > 0);
+      } catch (err) {
+        // Worker died or timed out — call() already discarded it and
+        // reset loadPromise, so kick off a reload in the background
+        // (fire-and-forget) rather than letting every future detect()
+        // fail the same way. This single check just reports "nothing".
+        if (!loadPromise) api.load().catch(() => {});
+        console.warn("[ObjectDetector] detect() failed, reloading worker:", (err && err.message) || err);
+        return [];
+      }
     },
 
     dispose() {
@@ -137,13 +186,17 @@
   const api = {
     load() {
       if (!loadPromise) {
-        loadPromise = call({
-          type: "load",
-          ortUrl: ORT_URL,
-          wasmPaths: WASM_PATHS,
-          models: MODELS,
-          force: window.OBJECT_DETECTOR_FORCE,
-        })
+        loadPromise = call(
+          {
+            type: "load",
+            ortUrl: ORT_URL,
+            wasmPaths: WASM_PATHS,
+            models: MODELS,
+            force: window.OBJECT_DETECTOR_FORCE,
+          },
+          [],
+          LOAD_TIMEOUT_MS
+        )
           .then((res) => {
             inputSize = res.inputSize;
             model.info = { model: res.model, backend: res.backend, inputSize: res.inputSize };

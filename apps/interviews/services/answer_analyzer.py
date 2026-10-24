@@ -1,12 +1,13 @@
 # apps/interviews/services/answer_analyzer.py
 
 import logging
+import re
 
 from django.utils import timezone
 
 from apps.ai_engine.llm_client import llm_client
 from apps.ai_engine.prompts.answer_analysis_prompt import (
-    ANSWER_ANALYSIS_SYSTEM_PROMPT,
+    build_answer_analysis_system_prompt,
     build_answer_analysis_user_prompt,
 )
 from apps.interviews.models import Answer, Question
@@ -17,6 +18,34 @@ logger = logging.getLogger(__name__)
 # aggregate score calculation and validation stay in sync with the
 # prompt schema in answer_analysis_prompt.py.
 SCORE_CATEGORIES = ("relevance", "depth", "communication")
+
+# Guardrail independent of the LLM's own judgment (belt-and-suspenders
+# alongside the prompt rule in answer_analysis_prompt.py): if the
+# candidate plainly said they don't know / aren't sure, there is nothing
+# to "expand on" — a follow-up question in that case just repeats
+# "Could you expand on that?" at someone who already said they don't
+# know, which reads as broken. Matches English + common Hinglish forms.
+_NO_KNOWLEDGE_RE = re.compile(
+    r"\b("
+    r"i\s*(do\s*n['o]?t|dont)\s*know"
+    r"|no\s*idea"
+    r"|not\s*sure"
+    r"|i\s*have\s*no\s*idea"
+    r"|i\s*am\s*not\s*aware"
+    r"|i['’]?m\s*not\s*aware"
+    r"|i\s*can['’]?t\s*(answer|recall|remember)"
+    r"|i\s*have\s*no\s*(clue|knowledge)"
+    r"|mujhe\s*nahi\s*pata"
+    r"|pata\s*nahi"
+    r"|malum\s*nahi"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# A relevance score at or below this is treated as "no real content"
+# even if the transcript didn't literally match the phrases above
+# (e.g. a rambling but entirely off-topic answer).
+_NO_KNOWLEDGE_RELEVANCE_CEILING = 2
 
 
 class AnswerAnalysisError(Exception):
@@ -47,7 +76,7 @@ def analyze_answer(
 
     try:
         result = llm_client.generate_json(
-            system_prompt=ANSWER_ANALYSIS_SYSTEM_PROMPT,
+            system_prompt=build_answer_analysis_system_prompt(question.session.is_white_collar),
             user_prompt=build_answer_analysis_user_prompt(
                 question_text=question.text,
                 question_topic_tag=question.topic_tag,
@@ -64,6 +93,8 @@ def analyze_answer(
             exc,
         )
         analysis = _build_fallback_analysis(reason=str(exc))
+
+    analysis = _apply_no_knowledge_override(analysis, transcript_text)
 
     score = _compute_aggregate_score(analysis)
 
@@ -120,6 +151,48 @@ def _validate_analysis(result: dict) -> dict:
         "notes": result.get("notes", "") or "",
         "red_flags": result.get("red_flags", []) or [],
     }
+
+
+def _apply_no_knowledge_override(analysis: dict, transcript_text: str) -> dict:
+    """
+    Forces should_follow_up to False when the candidate gave no real
+    content to follow up on — regardless of what the LLM returned. This
+    is a deterministic safety net on top of the prompt-level instruction
+    in answer_analysis_prompt.py, because an LLM occasionally still asks
+    to "expand on" an answer that was just "I don't know".
+
+    Triggers on either:
+      - the transcript matching a direct "I don't know" / "not sure" /
+        "no idea" phrase (English + common Hinglish forms), or
+      - an empty transcript, or
+      - a relevance score at/below _NO_KNOWLEDGE_RELEVANCE_CEILING
+        (i.e. the model itself judged the answer as essentially
+        off-topic/empty, even if it didn't literally say "I don't know").
+    """
+    text = (transcript_text or "").strip()
+    relevance = analysis.get("relevance")
+
+    no_real_content = (
+        not text
+        or _NO_KNOWLEDGE_RE.search(text) is not None
+        or (isinstance(relevance, (int, float)) and relevance <= _NO_KNOWLEDGE_RELEVANCE_CEILING)
+    )
+
+    if no_real_content and analysis.get("should_follow_up"):
+        analysis = dict(analysis)
+        analysis["should_follow_up"] = False
+        analysis["follow_up_reason"] = ""
+        note_suffix = "[auto] should_follow_up forced to false — no substantive answer to follow up on."
+        existing_notes = (analysis.get("notes") or "").strip()
+        analysis["notes"] = f"{existing_notes} {note_suffix}".strip() if existing_notes else note_suffix
+        logger.info(
+            "Overrode should_follow_up=False for a 'no knowledge'/empty answer "
+            "(relevance=%s, transcript=%r).",
+            relevance,
+            text[:120],
+        )
+
+    return analysis
 
 
 def _build_fallback_analysis(reason: str) -> dict:

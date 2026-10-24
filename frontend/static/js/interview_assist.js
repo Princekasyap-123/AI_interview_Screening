@@ -6,21 +6,27 @@
  * nothing is stored and no server changes are needed.
  *
  *  1. End-of-answer detection: once the candidate has spoken for a while
- *     and then stays silent for submitSilenceMs (4 s), emits "autoSubmit".
+ *     and then stays silent for submitSilenceMs (3.5 s), emits "autoSubmit".
  *     A short countdown is shown first ("countdown" events) and any speech
  *     cancels it, so thinking pauses are not cut off.
  *  2. Backchannel: in a natural pause after a stretch of speech, emits
  *     "backchannel" (the page plays "Uh-huh." / "I see." + a nod),
  *     at most once every backchannelGapMs (9 s).
- *  3. No answer: after nudgeMs (15 s) with no speech emits "nudge" once
- *     ("Take your time…"); after noAnswerMs (40 s) emits "autoSubmit".
+ *  3. No answer: after nudgeMs (5 s) with no speech emits "nudge" once
+ *     ("Take your time…"); after noAnswerMs (11 s) emits "autoSubmit".
  *  4. Spoken requests (Chrome / Edge only, Web Speech API): "can you
  *     repeat the question?" -> "repeatRequest"; "that's all" / "I'm done"
- *     at the end of the answer -> "doneSaid". Other browsers simply skip
- *     this part; 1–3 still work.
+ *     at the end of the answer -> "doneSaid"; abusive language (English,
+ *     Hinglish, Hindi; same list as apps/interviews/services/abuse_filter.py)
+ *     -> "abuse" at once, mid-answer. Other browsers simply skip this part;
+ *     1–3 still work, and the server checks every answer for abuse anyway.
  *
- * Voice activity is measured with a Web Audio AnalyserNode and an adaptive
- * noise floor, so a fan or room noise is not mistaken for speech.
+ * Voice activity is measured with a Web Audio AnalyserNode. The noise floor
+ * is the 15th percentile of the last ~6 s of levels, so steady background
+ * sound (fan, AC, laptop hum) becomes "silence" within seconds and never
+ * blocks end-of-answer detection. If sound stays "loud" for 20 s without a
+ * single pause, it is treated as noise too. Debug in the browser console:
+ *   window.ASSIST_DEBUG = true   -> prints level / floor / state every second.
  *
  * API:
  *   const assist = new InterviewAssist();
@@ -37,19 +43,63 @@
   "use strict";
 
   const TICK_MS = 50;
+  const LEVEL_WINDOW = 120;            // ~6 s of 50 ms level samples for the noise floor
+  const FLOOR_PERCENTILE = 0.15;
+  const SPEECH_ABOVE_FLOOR_DB = 10;    // speech must be this much louder than the floor
+  const MIN_SPEECH_DB = -55;           // ...and at least this loud
+  const NO_PAUSE_NOISE_MS = 20000;     // "speaking" 20 s without any pause = noise
+  const PAUSE_GUARD_MS = 15000;        // an aside can never keep detection paused longer
   const DEFAULTS = {
     minSpeechMs: 1500,            // speech needed before auto-submit can happen
-    submitSilenceMs: 4000,        // silence after speech that ends the answer
-    countdownFromMs: 1800,        // show the countdown after this much silence
+    submitSilenceMs: 3500,        // silence after speech that ends the answer (3-4 s)
+    countdownFromMs: 1500,        // show the countdown after this much silence
     backchannelMinRunMs: 2500,    // speech stretch before a backchannel is allowed
     backchannelPauseMs: [600, 1100],
     backchannelGapMs: 9000,
     backchannelStartMs: 5000,     // not in the first seconds of an answer
     backchannelChance: 0.6,
-    nudgeMs: 15000,
-    noAnswerMs: 40000,
+    nudgeMs: 5000,                // no speech at all for 5 s -> interviewer says something
+    noAnswerMs: 11000,            // still nothing (asides not counted) -> move on
     maxRepeats: 2,
   };
+
+  // Mirror of apps/interviews/services/abuse_filter.py — keep in sync.
+  // Patterns have no double letters because the text is collapsed first.
+  const ABUSE_LATIN = new RegExp([
+    "\\bfuck\\w*", "\\bmotherf\\w*", "\\bmofo\\b", "\\bbitch\\w*", "\\bbastard\\w*",
+    "\\basshole\\w*", "\\bcunt\\w*", "\\bwhore\\w*", "\\bslut\\w*", "\\bdickhead\\w*",
+    "\\bretard\\w*", "\\bniger\\w*", "\\bfagot\\w*", "\\bsisterf\\w*",
+    "\\bma?d[ae]?rchod\\w*", "\\bmadarchd\\w*", "\\bb[ae]?h?[ae]n ?chod\\w*", "\\bbh[ae]nchod\\w*",
+    "\\bbhnchod\\w*", "\\bchutiy\\w*", "\\bchutia\\w*", "\\bchut\\b", "\\bbhosd\\w*", "\\bbhosr\\w*",
+    "\\bgandu\\b", "\\bgand mar\\w*", "\\bgand\\b", "\\blund\\b", "\\blauda\\b", "\\blavda\\b",
+    "\\blawda\\b", "\\bloda\\b", "\\blodu\\b", "\\brand(i|iy[ao]n?)\\b", "\\bharami\\w*",
+    "\\bharamzad\\w*", "\\bharamkhor\\w*", "\\bkutiya\\w*", "\\bkamin[ae]\\b", "\\bjhant\\w*",
+    "\\bteri ma ki\\b", "\\bteri behen ki\\b", "\\bbsdk\\b", "\\bbkl\\b", "\\bmkc\\b",
+  ].join("|"));
+  const ABUSE_DEVANAGARI = [
+    "मादरचोद", "मादरजात", "बहनचोद", "भेनचोद", "भैनचोद", "बहनचो", "चूतिया", "चुतिया", "चूतिये",
+    "चुतिये", "चूत", "भोसड़", "भोसड", "भोसडी", "गांडू", "गाँडू", "गांड", "गाँड", "लौड़ा", "लौडा",
+    "लवड़ा", "लंड", "रंडी", "हरामी", "हरामज़ादा", "हरामजादा", "हरामखोर", "कुतिया", "कमीना",
+    "कमीने", "झांट", "झाँट", "तेरी माँ की", "तेरी मां की", "तेरी बहन की",
+  ];
+  // Chrome's recognizer masks English profanity as "f***" — that IS a swear word.
+  const MASKED_PROFANITY = /\b[a-z]\*{2,}/i;
+  const LEET = { "@": "a", "4": "a", "1": "i", "!": "i", "0": "o", "3": "e", "$": "s", "5": "s", "7": "t" };
+
+  function findAbusiveTerms(text) {
+    if (!text) return [];
+    const found = [];
+    const masked = text.match(MASKED_PROFANITY);
+    if (masked) found.push(masked[0]);
+    let t = text.normalize("NFKC").toLowerCase().replace(/[@4!10357$]/g, (c) => LEET[c] || c);
+    t = t.replace(/[^a-z\s]/g, " ").replace(/([a-z])\1+/g, "$1").replace(/\s+/g, " ").trim();
+    const re = new RegExp(ABUSE_LATIN.source, "g");
+    let m;
+    while ((m = re.exec(t))) found.push(m[0]);
+    const deva = text.normalize("NFC");
+    for (const root of ABUSE_DEVANAGARI) if (deva.includes(root.normalize("NFC"))) found.push(root);
+    return [...new Set(found)];
+  }
 
   const REPEAT_RE = /\b(repeat( the| that| your| it)?( question)?|say (that|it) again|come again|pardon|one more time|(didn'?t|did not|couldn'?t|could not) (get|hear|catch|understand) (that|you|it|the question)|what was the question)\b/i;
   const DONE_RE = /\b(that'?s (all|it|my answer)|that is (all|my answer)|i'?m done|i am done|i have (finished|completed)( my answer)?)\W*$/i;
@@ -114,7 +164,10 @@
       this.countdown = null;
       this.repeats = 0;
       this.submitted = false;
-      this.floor = -60;
+      this.levels = this.levels || [];   // kept across answers: the floor is known from the start
+      this.floorBoost = 0;
+      this.lastQuietAt = now;
+      this.lastDebugAt = 0;
       clearInterval(this.timer);
       this.timer = setInterval(() => this._tick(), TICK_MS);
       this._startRecognition();
@@ -133,9 +186,12 @@
       if (!this.paused) this.pausedAt = performance.now();
       this.paused = true;
       this._setCountdown(null);
+      clearTimeout(this.pauseGuard);
+      this.pauseGuard = setTimeout(() => this.resume(), PAUSE_GUARD_MS);   // never stay paused
     }
 
     resume() {
+      clearTimeout(this.pauseGuard);
       if (!this.active) return;
       const now = performance.now();
       if (this.paused && this.pausedAt) this.startedAt += now - this.pausedAt;   // asides don't count as "no answer" time
@@ -160,10 +216,26 @@
       if (this.paused) { this.lastVoiceAt = now; return; }
 
       const db = this._levelDb();
-      const loud = db > Math.max(this.floor + 12, -52);
-      // noise floor: drops fast to quiet levels, rises slowly during silence
-      if (db < this.floor) this.floor = db;
-      else if (!loud) this.floor += 0.04 * (db - this.floor);
+      this.levels.push(db);
+      if (this.levels.length > LEVEL_WINDOW) this.levels.shift();
+      const floor = this._noiseFloor() + this.floorBoost;
+      let loud = db > Math.max(floor + SPEECH_ABOVE_FLOOR_DB, MIN_SPEECH_DB);
+
+      // Constant sound with no pause at all for 20 s is noise, not speech:
+      // lift the floor above it for the rest of this answer.
+      if (!loud) this.lastQuietAt = now;
+      else if (now - this.lastQuietAt > NO_PAUSE_NOISE_MS) {
+        this.floorBoost += db - floor;
+        this.lastQuietAt = now;
+        loud = false;
+        console.warn("[InterviewAssist] continuous sound for 20 s — treating it as background noise");
+      }
+
+      if (window.ASSIST_DEBUG && now - this.lastDebugAt > 1000) {
+        this.lastDebugAt = now;
+        console.log(`[InterviewAssist] level ${db.toFixed(1)} dB, floor ${floor.toFixed(1)} dB, ` +
+          `voice=${loud}, spoken ${Math.round(this.speechMs)} ms, silent ${Math.round(now - this.lastVoiceAt)} ms`);
+      }
 
       this.voicedTicks = loud ? this.voicedTicks + 1 : 0;
       const speaking = this.voicedTicks >= 3;               // >= 150 ms of sound
@@ -200,10 +272,16 @@
       }
 
       // 3. no answer at all
-      if (this.speechMs < 300) {
+      if (this.speechMs < this.cfg.minSpeechMs) {
         if (!this.nudged && elapsed >= this.cfg.nudgeMs) { this.nudged = true; this._emit("nudge"); }
         else if (elapsed >= this.cfg.noAnswerMs) this._submit("no_answer");
-      }
+    }
+    }
+
+    _noiseFloor() {
+      if (this.levels.length < 20) return -60;
+      const sorted = this.levels.slice().sort((a, b) => a - b);
+      return sorted[Math.floor(sorted.length * FLOOR_PERCENTILE)];
     }
 
     _setCountdown(sec) {
@@ -229,7 +307,7 @@
       this.ignoreBefore = 0;
       if (this.rec) return;                      // still running from before
       const rec = new SR();
-      rec.lang = "en-US";
+      rec.lang = "en-IN";                       // Indian English: better with Hinglish
       rec.continuous = true;
       rec.interimResults = true;
       rec.onresult = (e) => this._onResult(e);
@@ -254,6 +332,17 @@
       for (let i = Math.max(this.ignoreBefore, 0); i < e.results.length; i++) text += " " + e.results[i][0].transcript;
       text = text.trim();
       if (!text) return;
+
+      // Abusive language ends the interview at once (server decides; see page).
+      let all = "";
+      for (let i = 0; i < e.results.length; i++) all += " " + e.results[i][0].transcript;
+      const terms = findAbusiveTerms(all);
+      if (terms.length) {
+        this._submit("abuse");
+        this._emit("abuse", { terms, excerpt: all.trim().slice(-300) });
+        return;
+      }
+
       const words = text.split(/\s+/).length;
 
       if (this.repeats < this.cfg.maxRepeats && words <= 14 && REPEAT_RE.test(text)) {
@@ -270,5 +359,6 @@
     }
   }
 
+  InterviewAssist.findAbusiveTerms = findAbusiveTerms;   // also used for tests
   window.InterviewAssist = InterviewAssist;
 })();

@@ -77,6 +77,9 @@ class ProctoringFlag(models.Model):
         PHONE_DETECTED = "phone_detected", "Mobile phone visible"
         NOTES_DETECTED = "notes_detected", "Notes or book visible"
         READING_SUSPECTED = "reading_suspected", "Possibly reading from outside the screen"
+        ABUSIVE_LANGUAGE = "abusive_language", "Abusive or offensive language"
+        ATTIRE_CONCERN = "attire_concern", "Attire may not be formal (informational)"
+
     class Severity(models.TextChoices):
         LOW = "low", "Low"
         MEDIUM = "medium", "Medium"

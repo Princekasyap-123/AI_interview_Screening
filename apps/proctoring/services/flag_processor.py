@@ -20,6 +20,7 @@ WARNINGS_BEFORE_TERMINATION = 4
 WARNING_LIMIT_OVERRIDES = {
     ProctoringFlag.FlagType.FACE_MISMATCH: 3,   # the 4th confirmed mismatch ends it
     ProctoringFlag.FlagType.PHONE_DETECTED: 3,  # the 4th confirmed phone sighting ends it
+    ProctoringFlag.FlagType.ABUSIVE_LANGUAGE: 0,  # zero tolerance: the 1st one ends it
 }
 
 # These types show the candidate a notice and are logged for the
@@ -43,6 +44,7 @@ BURST_COOLDOWN_SECONDS = 5
 BURST_COOLDOWN_EXEMPT_TYPES = {
     ProctoringFlag.FlagType.PHONE_DETECTED,
     ProctoringFlag.FlagType.NOTES_DETECTED,
+    ProctoringFlag.FlagType.ABUSIVE_LANGUAGE,
 }
 
 # A counted flag within this many seconds of the previous counted flag
@@ -65,10 +67,12 @@ MIN_WINDOW_BLUR_DURATION_MS = 4000
 MIN_NO_FACE_DURATION_MS = 8000
 MIN_MULTIPLE_FACES_DURATION_MS = 4000
 
-# Never counts toward strikes (rough heuristic) — logged only.
-NEVER_COUNTED_TYPES = {
-    ProctoringFlag.FlagType.GAZE_AWAY,
-}
+# Never counts toward strikes — logged only. (GAZE_AWAY used to be here;
+# it is now a real strike: the browser only sends it after the candidate
+# has looked away — head turned or eyes off-screen, compared to their own
+# baseline — continuously for 3 s, and repeats it every 10 s while it
+# continues.)
+NEVER_COUNTED_TYPES = set()
 
 # Counted as soon as they arrive (subject to the cooldowns above).
 # The browser already confirms these over several checks before sending,
@@ -81,6 +85,8 @@ ALWAYS_COUNTABLE_TYPES = {
     ProctoringFlag.FlagType.PHONE_DETECTED,
     ProctoringFlag.FlagType.NOTES_DETECTED,
     ProctoringFlag.FlagType.READING_SUSPECTED,
+    ProctoringFlag.FlagType.GAZE_AWAY,
+    ProctoringFlag.FlagType.ABUSIVE_LANGUAGE,
 }
 
 DURATION_GATED_TYPES = {
@@ -96,13 +102,14 @@ SEVERITY_MAP = {
     ProctoringFlag.FlagType.FULLSCREEN_EXIT: ProctoringFlag.Severity.HIGH,
     ProctoringFlag.FlagType.NO_FACE: ProctoringFlag.Severity.MEDIUM,
     ProctoringFlag.FlagType.MULTIPLE_FACES: ProctoringFlag.Severity.HIGH,
-    ProctoringFlag.FlagType.GAZE_AWAY: ProctoringFlag.Severity.LOW,
+    ProctoringFlag.FlagType.GAZE_AWAY: ProctoringFlag.Severity.MEDIUM,
     ProctoringFlag.FlagType.COPY_PASTE: ProctoringFlag.Severity.MEDIUM,
     ProctoringFlag.FlagType.DEVTOOLS_OPENED: ProctoringFlag.Severity.HIGH,
     ProctoringFlag.FlagType.FACE_MISMATCH: ProctoringFlag.Severity.HIGH,
     ProctoringFlag.FlagType.PHONE_DETECTED: ProctoringFlag.Severity.HIGH,
     ProctoringFlag.FlagType.NOTES_DETECTED: ProctoringFlag.Severity.MEDIUM,
     ProctoringFlag.FlagType.READING_SUSPECTED: ProctoringFlag.Severity.MEDIUM,
+    ProctoringFlag.FlagType.ABUSIVE_LANGUAGE: ProctoringFlag.Severity.HIGH,
 }
 
 # Candidate-facing wording used in warnings and the termination message.
@@ -124,7 +131,11 @@ FLAG_REASONS = {
     ProctoringFlag.FlagType.READING_SUSPECTED: (
         "You appear to be reading from something outside the screen while answering"
     ),
-    ProctoringFlag.FlagType.GAZE_AWAY: "Your gaze moved away from the screen",
+    ProctoringFlag.FlagType.GAZE_AWAY: (
+        "You looked away from the screen for several seconds. "
+        "Please keep looking at the screen during the interview"
+    ),
+    ProctoringFlag.FlagType.ABUSIVE_LANGUAGE: "Abusive or offensive language was used",
 }
 
 

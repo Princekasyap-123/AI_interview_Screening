@@ -557,6 +557,18 @@
   .status-pill.parsed { color: var(--ok); border-color: rgba(16,183,89,0.4); }
   .status-pill.failed { color: var(--warn); border-color: rgba(220,53,69,0.4); }
 
+  /* Blue-collar / white-collar role pill — same visual language as
+     .status-pill, new color-only variant (no new layout rules). */
+  .role-pill {
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+  }
+  .role-pill.white_collar { color: var(--c-blue); border-color: rgba(13,110,253,0.35); }
+  .role-pill.blue_collar { color: var(--amber); border-color: rgba(184,134,11,0.4); }
+
   .risk-dot {
     width: 6px;
     height: 6px;
@@ -786,6 +798,20 @@
 
   .no-answer { font-size: 13px; color: var(--text-faint); font-style: italic; }
 
+  /* Candidate counter-questions / repeat / clarification exchanges that
+     happened before the actual answer — stored in
+     question.generation_context.candidate_queries by turn_intent.py. */
+  .qa-exchanges { margin: 10px 0; display: flex; flex-direction: column; gap: 8px; }
+  .qa-exchange { background: var(--panel-alt); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 12.5px; }
+  .qa-exchange .ex-tag {
+    display: inline-block; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.4px; color: var(--accent-bright); margin-bottom: 4px;
+  }
+  .qa-exchange .ex-said { color: var(--text); margin-bottom: 4px; }
+  .qa-exchange .ex-said::before { content: "Candidate: "; color: var(--text-faint); font-weight: 600; }
+  .qa-exchange .ex-reply { color: var(--text-dim); }
+  .qa-exchange .ex-reply::before { content: "Interviewer: "; color: var(--text-faint); font-weight: 600; }
+
   /* ============ RESPONSIVE ============ */
   @media (max-width: 1200px) {
     .stat-grid { grid-template-columns: repeat(2, 1fr); }
@@ -960,7 +986,7 @@
         <div class="card" id="createSection">
           <div class="card-head">
             <div class="card-title">Create Interview Session</div>
-            <div class="card-desc">Pick a candidate, paste the job description and set how many questions to ask.</div>
+            <div class="card-desc">Pick a candidate, choose the interview type, paste the job description and set how many questions to ask.</div>
           </div>
           <div class="create-session">
             <form id="createSessionForm">
@@ -970,6 +996,10 @@
                 {% for c in candidates %}
                   <option value="{{ c.id }}">{{ c.name }}{% if c.parsing_status %} — {{ c.get_parsing_status_display }}{% endif %}</option>
                 {% endfor %}
+              </select>
+              <select name="job_role_type" id="jobRoleType" required>
+                <option value="white_collar" selected>White-collar (professional)</option>
+                <option value="blue_collar">Blue-collar (hands-on)</option>
               </select>
               <input type="number" name="max_questions" id="maxQuestions" value="5" min="1" max="15">
               <textarea name="job_description_text" id="jdText" required placeholder="Paste job description here..." rows="2"></textarea>
@@ -1027,6 +1057,7 @@
                 </div>
                 <div class="session-meta">
                   <span class="status-pill {{ session.status }}">{{ session.get_status_display }}</span>
+                  <span class="role-pill {{ session.job_role_type }}">{{ session.get_job_role_type_display }}</span>
                   {% if session.proctoring_session and session.proctoring_session.countable_violation_count > 0 %}
                     <span class="risk-dot flagged"></span>
                   {% else %}
@@ -1052,6 +1083,7 @@
               <div>
                 <div class="detail-name">{{ selected_session.candidate.name }}</div>
                 <div class="detail-email">{{ selected_session.candidate.email }}</div>
+                <div style="margin-top:6px;"><span class="role-pill {{ selected_session.job_role_type }}">{{ selected_session.get_job_role_type_display }}</span></div>
               </div>
               {% if selected_session.final_rating %}
                 <div class="score-badge">
@@ -1178,6 +1210,18 @@
                     Q{{ question.order }}. {{ question.text }}
                     <span class="qa-tag">{{ question.topic_tag }}</span>
                   </div>
+                  {% if question.generation_context.candidate_queries %}
+                    <div class="qa-exchanges">
+                      {% for ex in question.generation_context.candidate_queries %}
+                        <div class="qa-exchange">
+                          <span class="ex-tag">{{ ex.intent|default:"query" }}</span>
+                          <div class="ex-said">{{ ex.transcript|default:"—" }}</div>
+                          <div class="ex-reply">{{ ex.reply|default:"—" }}</div>
+                        </div>
+                      {% endfor %}
+                    </div>
+                  {% endif %}
+
                   {% if question.answer and question.answer.transcript_text %}
                     <div class="qa-answer">{{ question.answer.transcript_text }}</div>
                     <div class="qa-scores">
@@ -1364,6 +1408,7 @@ document.getElementById('createSessionForm').addEventListener('submit', async (e
 
   const payload = {
     candidate_id: document.getElementById('candidateSelect').value,
+    job_role_type: document.getElementById('jobRoleType').value,
     job_description_text: document.getElementById('jdText').value,
     max_questions: parseInt(document.getElementById('maxQuestions').value, 10),
   };

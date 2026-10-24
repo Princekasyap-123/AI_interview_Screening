@@ -74,6 +74,9 @@ class InterviewSessionCreateView(APIView):
         session = InterviewSession.objects.create(
             candidate=candidate,
             job_description_text=serializer.validated_data.get("job_description_text", ""),
+            job_role_type=serializer.validated_data.get(
+                "job_role_type", InterviewSession.JobRoleType.WHITE_COLLAR
+            ),
             max_questions=serializer.validated_data.get(
                 "max_questions", settings.INTERVIEW_DEFAULT_MAX_QUESTIONS
             ),

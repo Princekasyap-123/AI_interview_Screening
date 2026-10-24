@@ -6,7 +6,7 @@ from django.db import transaction
 
 from apps.ai_engine.llm_client import llm_client
 from apps.ai_engine.prompts.final_rating_prompt import (
-    FINAL_RATING_SYSTEM_PROMPT,
+    build_final_rating_system_prompt,
     build_final_rating_user_prompt,
 )
 from apps.candidates.services import resolve_candidate_profile
@@ -64,7 +64,7 @@ def generate_final_rating_for_session(session: InterviewSession) -> FinalRating:
 
     try:
         result = llm_client.generate_json(
-            system_prompt=FINAL_RATING_SYSTEM_PROMPT,
+            system_prompt=build_final_rating_system_prompt(session.is_white_collar),
             user_prompt=build_final_rating_user_prompt(
                 candidate_profile=candidate_profile,
                 qa_pairs=qa_pairs,

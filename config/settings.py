@@ -23,11 +23,12 @@ if not SECRET_KEY:
 
 DEBUG = os.environ.get("DJANGO_DEBUG", "False") == "True"
 
+# Sahi
 ALLOWED_HOSTS = [
     h.strip()
     for h in os.environ.get(
-        "DJANGO_ALLOWED_HOSTS",
-        "localhost,127.0.0.1,ardently-dingo-designed.ngrok-free.dev"
+        "ALLOWED_HOSTS",
+        "localhost,127.0.0.1,.ngrok-free.dev",
     ).split(",")
     if h.strip()
 ]
@@ -263,3 +264,16 @@ LOGIN_URL = "/admin/login/"
 
 KOKORO_VOICE = "bf_emma"
 
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https://.*\.ngrok-free\.dev$",
+]
+
+
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "https://*.ngrok-free.dev",
+]
+
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+USE_X_FORWARDED_HOST = True

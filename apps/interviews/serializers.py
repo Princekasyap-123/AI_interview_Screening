@@ -14,13 +14,17 @@ class InterviewSessionCreateSerializer(serializers.Serializer):
     """
 
     candidate_id = serializers.UUIDField()
+    job_role_type = serializers.ChoiceField(
+        choices=InterviewSession.JobRoleType.choices,
+        required=False,
+        default=InterviewSession.JobRoleType.WHITE_COLLAR,
+    )
     job_description_text = serializers.CharField(
         required=False, allow_blank=True, default=""
     )
     max_questions = serializers.IntegerField(
         required=False, min_value=1, max_value=30
     )
-
 
 class AnswerSerializer(serializers.ModelSerializer):
     class Meta:
@@ -76,6 +80,7 @@ class InterviewSessionDetailSerializer(serializers.ModelSerializer):
             "candidate_name",
             "candidate_email",
             "status",
+            "job_role_type",
             "termination_reason",
             "termination_note",
             "max_questions",
@@ -105,6 +110,7 @@ class InterviewSessionSummarySerializer(serializers.ModelSerializer):
             "id",
             "candidate_name",
             "status",
+            "job_role_type",
             "termination_reason",
             "questions_asked_count",
             "max_questions",

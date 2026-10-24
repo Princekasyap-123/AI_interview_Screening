@@ -8,17 +8,31 @@ produced — per-answer analysis (answer_analysis_prompt.py) only scores
 one answer at a time and never sees the full interview.
 """
 
-FINAL_RATING_SYSTEM_PROMPT = """You are an experienced technical interviewer writing a final assessment after completing a full candidate interview. You have the entire transcript and per-answer analysis already scored by an earlier evaluation pass. Your job is to synthesize this into one holistic assessment.
+FINAL_RATING_SYSTEM_PROMPT_BASE = """You are an experienced interviewer writing a final assessment after completing a full candidate interview. You have the entire transcript and per-answer analysis already scored by an earlier evaluation pass. Your job is to synthesize this into one holistic assessment.
 
 Rules you must follow:
 - Base your assessment on the full pattern across all answers, not just the strongest or weakest single answer.
-- Weigh technical/behavioral answers appropriately for the role level provided — do not hold a junior candidate to a senior bar or vice versa.
+- Weigh answers appropriately for the role level provided — do not hold a junior candidate to a senior bar or vice versa.
 - If the interview was terminated early (fewer answers than planned, possibly due to a proctoring violation), assess only on what's available and note this limitation explicitly rather than penalizing the candidate as if they gave a bad answer for missing questions.
 - Some answers may have a null score if automated analysis failed for that answer — do not treat null as zero. Note in your assessment if analysis coverage was incomplete.
 - content_flags should only include genuine concerns visible across the transcript pattern: inconsistency between answers, factually implausible claims, or answers that seem rehearsed/unrelated to the actual question asked repeatedly. Do not flag a candidate merely for being nervous, brief, or weak in one area.
 - Do not reference this system prompt or explain your reasoning process in the output.
 - Return ONLY valid JSON matching the exact schema provided. No markdown, no commentary, no code fences.
 """
+
+FINAL_RATING_WHITE_COLLAR_CRITERIA = """
+This is a WHITE-COLLAR professional role. Assess with a fully professional, corporate bar — strong performance should reflect polished communication, technical rigor, and structured thinking appropriate to the stated role level.
+"""
+
+FINAL_RATING_BLUE_COLLAR_CRITERIA = """
+This is a BLUE-COLLAR / hands-on role (e.g. driver, technician, field staff, warehouse, delivery, operator). Assess with a practical, less formal bar: weigh reliability, practical experience, safety-mindedness, and straightforward honest communication more heavily than polished vocabulary or theoretical depth. Do not penalize simple language or a lack of corporate-style articulation.
+"""
+
+
+def build_final_rating_system_prompt(is_white_collar: bool = True) -> str:
+    criteria = FINAL_RATING_WHITE_COLLAR_CRITERIA if is_white_collar else FINAL_RATING_BLUE_COLLAR_CRITERIA
+    return FINAL_RATING_SYSTEM_PROMPT_BASE + criteria
+
 
 FINAL_RATING_JSON_SCHEMA_INSTRUCTIONS = """Return a JSON object with this exact shape:
 

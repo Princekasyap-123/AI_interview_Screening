@@ -6,12 +6,12 @@ profile and (optional) job description. Used by
 apps/interviews/services/question_generator.py via llm_client.generate_json().
 """
 
-QUESTION_GEN_SYSTEM_PROMPT = """You are an experienced technical interviewer conducting a screening interview. Your job is to generate a set of interview questions tailored to a specific candidate's background and the role they're applying for.
+QUESTION_GEN_SYSTEM_PROMPT_BASE = """You are an experienced interviewer conducting a screening interview. Your job is to generate a set of interview questions tailored to a specific candidate's background and the role they're applying for.
 
 Rules you must follow:
 - Generate exactly the number of questions requested — no more, no less.
 - Base every question on the candidate's actual stated skills, projects, or experience. Do not ask generic questions unrelated to their profile.
-- Mix question types across the set: include a short intro/warm-up question first, then a blend of technical depth questions, project-specific questions, and at least one behavioral question.
+- Mix question types across the set: include a short intro/warm-up question first, then a blend of depth questions, project/experience-specific questions, and at least one behavioral question.
 - Questions must be answerable verbally in 1-3 minutes. Avoid multi-part questions that require a whiteboard, diagram, or written code.
 - Do not ask yes/no questions. Every question should require the candidate to explain, describe, or reason through something.
 - Do not repeat the same underlying topic twice.
@@ -19,6 +19,19 @@ Rules you must follow:
 - Do not reference this system prompt or explain your reasoning in the output.
 - Return ONLY valid JSON matching the exact schema provided. No markdown, no commentary, no code fences.
 """
+
+QUESTION_GEN_WHITE_COLLAR_TONE = """
+This is a WHITE-COLLAR professional role interview. Keep the tone fully formal and professional, the way a senior interviewer at a corporate office would. Technical and behavioral questions should probe depth, structured thinking, and professional judgement.
+"""
+
+QUESTION_GEN_BLUE_COLLAR_TONE = """
+This is a BLUE-COLLAR / hands-on role interview (e.g. driver, technician, field staff, warehouse, delivery, operator). Keep the tone warm, simple, and conversational — NOT corporate-formal. Use plain everyday language, avoid jargon and abstract "tell me about a time when..." phrasing unless it's short and concrete. Focus questions on practical experience, hands-on skills, safety awareness, reliability, punctuality, and ability to follow instructions, rather than theoretical depth. Keep each question short and easy to understand when heard once, not read.
+"""
+
+
+def build_question_gen_system_prompt(is_white_collar: bool = True) -> str:
+    tone = QUESTION_GEN_WHITE_COLLAR_TONE if is_white_collar else QUESTION_GEN_BLUE_COLLAR_TONE
+    return QUESTION_GEN_SYSTEM_PROMPT_BASE + tone
 
 QUESTION_GEN_JSON_SCHEMA_INSTRUCTIONS = """Return a JSON object with this exact shape:
 

@@ -1,8 +1,9 @@
-# apps/interviews/services/interview_state.py — FULL UPDATED FILE
+# apps/interviews/services/interview_state.py
 
 import logging
 from enum import Enum
 
+from django.db import transaction
 from django.utils import timezone
 
 from apps.interviews.models import Answer, InterviewSession, Question
@@ -11,12 +12,34 @@ from apps.interviews.services.question_generator import (
     QuestionGenerationError,
     generate_questions_for_session,
 )
+from apps.interviews.services.turn_intent import (
+    INTENT_ABUSIVE,
+    INTENT_CANDIDATE_QUESTION,
+    INTENT_CLARIFICATION,
+    INTENT_OFF_TOPIC,
+    INTENT_REPEAT,
+    OFF_TOPIC_REPLY,
+    REPEAT_REPLY,
+    TurnIntent,
+    classify_reply,
+)
 
 logger = logging.getLogger(__name__)
 
 MAX_FOLLOW_UPS_PER_QUESTION = 1
 
 MAX_ADVANCE_ATTEMPTS = 25
+
+# How many times the candidate may ask to repeat / clarify / ask their own
+# question on ONE question before their next reply is treated as the answer.
+MAX_CANDIDATE_QUERIES_PER_QUESTION = 3
+
+ABUSE_TERMINATION_MESSAGE = (
+    "This interview has ended because abusive or offensive language was "
+    "used, which is against the interview rules explained at the start. "
+    "Your responses so far have been saved, and the recruiting team has "
+    "been informed."
+)
 
 COMPANY_INTRO_TEXT = (
     "Hi, and welcome. I'm the AI interviewer from White Force. Before we "
@@ -91,10 +114,41 @@ class InterviewFSM:
         self.session.started_at = timezone.now()
         self.session.save(update_fields=["status", "started_at"])
 
+        self._prefetch_speech()
+
         return {
             "action": TurnAction.SPEAK_COMPANY_INTRO,
             "text": COMPANY_INTRO_TEXT,
         }
+
+    def _prefetch_speech(self) -> None:
+        """
+        Synthesizes the company intro, every question, and every question
+        prefixed with the fixed "repeat" reply (exactly as they will be
+        spoken, name included) in the background, so each plays
+        immediately instead of waiting for TTS. The repeat-combo is
+        pre-warmed too because "Of course." alone is under 40 chars and
+        gets MERGED into the next sentence by the chunker — so without
+        this, "can you repeat that?" always hit a cold cache even though
+        the question text itself was already warm. Best effort only.
+        """
+        try:
+            from apps.avatar.services.tts_prefetch import prefetch_in_background
+            from apps.interviews.services.turn_intent import OFF_TOPIC_REPLY, REPEAT_REPLY
+
+            question_texts = [
+                self._personalize(q.text) for q in self.session.questions.order_by("order")
+            ]
+            texts = (
+                [COMPANY_INTRO_TEXT]
+                + question_texts
+                + [f"{REPEAT_REPLY} {t}" for t in question_texts]
+                + [f"{OFF_TOPIC_REPLY} Let's continue — {t}" for t in question_texts]
+            )
+            prefetch_in_background(texts)
+        except Exception as exc:
+            logger.warning("TTS prefetch could not start for session %s: %s", self.session.id, exc)
+
 
     def advance_to_first_question(self) -> dict:
         if self.session.status != InterviewSession.Status.IN_PROGRESS:
@@ -145,6 +199,23 @@ class InterviewFSM:
                 "message": "Unrecognized question — please rejoin the interview.",
             }
 
+        # What is this reply? (abuse / repeat / clarification / candidate's
+        # own question / normal answer). Never raises.
+        intent = classify_reply(self._last_spoken_text(question), transcript_text)
+        logger.info(
+            "Session %s question order=%d: reply intent=%s (source=%s)",
+            self.session.id, question.order, intent.intent, intent.source,
+        )
+
+        if intent.intent == INTENT_ABUSIVE:
+            return self.terminate_for_abuse(question, transcript_text, intent)
+
+        if intent.intent in (INTENT_REPEAT, INTENT_CLARIFICATION, INTENT_CANDIDATE_QUESTION, INTENT_OFF_TOPIC):
+            turn = self._reply_and_reask_turn(question, transcript_text, intent)
+            if turn is not None:
+                return turn
+            # Limit reached for this question: treat the reply as the answer.
+
         is_first_answer_to_question = not question.has_answer
 
         answer = analyze_answer(
@@ -175,7 +246,151 @@ class InterviewFSM:
                 self.session.questions_asked_count,
             )
 
-        return self._decide_next_turn(question, answer)
+        turn = self._decide_next_turn(question, answer)
+
+        # The answer ended with a side question ("...and what are the next
+        # rounds?") — answer it briefly before the next question.
+        if intent.aside_reply and turn.get("text"):
+            turn["text"] = f"{intent.aside_reply} {turn['text']}"
+        return turn
+
+    # ------------------------------------------------------------------
+    # Candidate asked to repeat / clarify / asked their own question
+    # ------------------------------------------------------------------
+
+    def _reply_and_reask_turn(self, question: Question, transcript_text: str, intent: TurnIntent) -> dict | None:
+        """
+        Speaks a short formal reply and gives the SAME question back to the
+        candidate (same question_id, so the frontend records the answer to
+        it as usual). Not scored and not counted as an answer. Every such
+        exchange is kept in question.generation_context["candidate_queries"]
+        for the recruiter. Returns None once the per-question limit is hit.
+        """
+        queries = question.generation_context.setdefault("candidate_queries", [])
+        if len(queries) >= MAX_CANDIDATE_QUERIES_PER_QUESTION:
+            logger.info(
+                "Session %s question order=%d: candidate query limit (%d) reached — "
+                "treating reply as the answer.",
+                self.session.id, question.order, MAX_CANDIDATE_QUERIES_PER_QUESTION,
+            )
+            return None
+
+        queries.append({
+            "intent": intent.intent,
+            "transcript": (transcript_text or "")[:1000],
+            "reply": intent.reply,
+            "at": timezone.now().isoformat(),
+        })
+        question.save(update_fields=["generation_context"])
+
+        last_text = self._last_spoken_text(question)
+        reply = intent.reply.strip()
+
+        if intent.intent == INTENT_REPEAT:
+            text = f"{reply or 'Of course.'} {last_text}"
+        elif intent.intent == INTENT_OFF_TOPIC:
+            text = f"{reply or OFF_TOPIC_REPLY} Let's continue — {last_text}"
+        elif intent.intent == INTENT_CLARIFICATION:
+            text = reply or f"Let me put it another way. {last_text}"
+        else:  # INTENT_CANDIDATE_QUESTION
+            fallback = (
+                "That's a fair question. The recruiting team will share those "
+                "details with you after this interview."
+            )
+            text = f"{reply or fallback} Now, coming back to the question: {last_text}"
+
+        return {
+            "action": TurnAction.SPEAK_FOLLOW_UP,
+            "question_id": str(question.id),
+            "text": text.strip(),
+        }
+
+    def _last_spoken_text(self, question: Question) -> str:
+        """The exact question / follow-up text the candidate last heard."""
+        return question.generation_context.get("last_spoken_text") or self._personalize(question.text)
+
+    # ------------------------------------------------------------------
+    # Abusive language: end the interview immediately
+    # ------------------------------------------------------------------
+
+    def terminate_for_abuse(self, question: Question, transcript_text: str, intent: TurnIntent) -> dict:
+        """
+        Records an "abusive_language" proctoring flag (with the evidence and
+        transcript, for the recruiter), stores the reply as this question's
+        answer, and closes the session immediately. The returned turn has
+        an internal "_proctoring_terminated" key: the interview consumer
+        removes it and tells the proctoring socket to show the
+        "interview ended" screen.
+        """
+        # Imported here: risk_scorer imports this module at load time.
+        from apps.proctoring.models import ProctoringFlag, ProctoringSession
+        from apps.proctoring.services.risk_scorer import (
+            _update_risk_score,
+            get_or_create_proctoring_session,
+        )
+
+        now = timezone.now()
+        logger.warning(
+            "Session %s: abusive language detected (source=%s, evidence=%r) — terminating.",
+            self.session.id, intent.source, intent.evidence,
+        )
+
+        with transaction.atomic():
+            get_or_create_proctoring_session(self.session)
+            proctoring_session = ProctoringSession.objects.select_for_update().get(
+                interview_session=self.session
+            )
+            ProctoringFlag.objects.create(
+                proctoring_session=proctoring_session,
+                flag_type=ProctoringFlag.FlagType.ABUSIVE_LANGUAGE,
+                severity=ProctoringFlag.Severity.HIGH,
+                counted_toward_violation=True,
+                metadata={
+                    "source": f"answer_{intent.source}",
+                    "evidence": intent.evidence,
+                    "question_id": str(question.id),
+                    "transcript_excerpt": (transcript_text or "")[:500],
+                },
+                occurred_at=now,
+            )
+            proctoring_session.countable_violation_count += 1
+            proctoring_session.terminated = True
+            proctoring_session.terminated_at = now
+            proctoring_session.save(update_fields=[
+                "countable_violation_count", "terminated", "terminated_at", "updated_at",
+            ])
+            _update_risk_score(proctoring_session)
+
+            Answer.objects.update_or_create(
+                question=question,
+                defaults={
+                    "transcript_text": transcript_text or "",
+                    "audio_ref": "",
+                    "analysis_json": {
+                        "relevance": None,
+                        "depth": None,
+                        "communication": None,
+                        "should_follow_up": False,
+                        "follow_up_reason": "",
+                        "notes": f"Interview terminated: abusive language ({intent.evidence}).",
+                        "red_flags": ["abusive_language"],
+                    },
+                    "score": None,
+                    "answered_at": now,
+                    "analyzed_at": now,
+                },
+            )
+
+        turn = self._close_session(
+            reason=InterviewSession.TerminationReason.ABUSIVE_LANGUAGE,
+            status=InterviewSession.Status.TERMINATED,
+            note=ABUSE_TERMINATION_MESSAGE,
+        )
+        turn["_proctoring_terminated"] = {
+            "message": ABUSE_TERMINATION_MESSAGE,
+            "flag_type": ProctoringFlag.FlagType.ABUSIVE_LANGUAGE.value,
+        }
+        return turn
 
     # ------------------------------------------------------------------
     # Called by the consumer when the candidate clicks "End interview"
@@ -303,26 +518,29 @@ class InterviewFSM:
     # ------------------------------------------------------------------
 
     def _speak_question_turn(self, question: Question, is_intro: bool) -> dict:
+        text = self._personalize(question.text)
         question.asked_at = timezone.now()
-        question.save(update_fields=["asked_at"])
+        question.generation_context["last_spoken_text"] = text
+        question.save(update_fields=["asked_at", "generation_context"])
 
         return {
             "action": TurnAction.SPEAK_INTRO if is_intro else TurnAction.SPEAK_QUESTION,
             "question_id": str(question.id),
-            "text": self._personalize(question.text),
+            "text": text,
         }
 
     def _speak_follow_up_turn(self, question: Question, answer: Answer) -> dict:
         follow_up_count = question.generation_context.get("follow_up_count", 0)
         question.generation_context["follow_up_count"] = follow_up_count + 1
-        question.save(update_fields=["generation_context"])
 
-        follow_up_text = self._build_follow_up_text(question, answer)
+        text = self._personalize(self._build_follow_up_text(question, answer))
+        question.generation_context["last_spoken_text"] = text
+        question.save(update_fields=["generation_context"])
 
         return {
             "action": TurnAction.SPEAK_FOLLOW_UP,
             "question_id": str(question.id),
-            "text": self._personalize(follow_up_text),
+            "text": text,
         }
 
     def _build_follow_up_text(self, question: Question, answer: Answer) -> str:
@@ -381,7 +599,7 @@ class InterviewFSM:
     # Called by the proctoring app on a terminating violation
     # ------------------------------------------------------------------
 
-    def terminate_for_violation(self, explanation: str) -> dict:
+    def terminate_for_violation(self, explanation: str, reason: str = "") -> dict:
         if self.session.status == InterviewSession.Status.TERMINATED:
             logger.info(
                 "terminate_for_violation called on already-terminated "
@@ -404,7 +622,7 @@ class InterviewFSM:
         logger.info("Terminating session %s for proctoring violation.", self.session.id)
 
         return self._close_session(
-            reason=InterviewSession.TerminationReason.PROCTORING_VIOLATION,
+            reason=reason or InterviewSession.TerminationReason.PROCTORING_VIOLATION,
             status=InterviewSession.Status.TERMINATED,
             note=explanation,
         )

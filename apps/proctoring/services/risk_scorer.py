@@ -168,17 +168,32 @@ def _terminate(
         proctoring_session.countable_violation_count,
     )
 
-    message = (
-        "This interview has ended. We repeatedly detected the following, even "
-        f"after several warnings: {reason_for(flag_type)}. The session was "
-        "closed automatically to keep the process fair for everyone. Your "
-        "responses so far have been saved, and you do not need to take any "
-        "further action — the recruiting team will follow up separately."
+    if result.warnings_allowed == 0:
+        # Zero-tolerance types (abusive language): no warnings were given.
+        message = (
+            f"This interview has ended. {reason_for(flag_type)}, which is "
+            "against the interview rules explained at the start. Your "
+            "responses so far have been saved, and the recruiting team has "
+            "been informed."
+        )
+    else:
+        message = (
+            "This interview has ended. We repeatedly detected the following, even "
+            f"after several warnings: {reason_for(flag_type)}. The session was "
+            "closed automatically to keep the process fair for everyone. Your "
+            "responses so far have been saved, and you do not need to take any "
+            "further action — the recruiting team will follow up separately."
+        )
+
+    termination_reason = (
+        InterviewSession.TerminationReason.ABUSIVE_LANGUAGE
+        if flag_type == ProctoringFlag.FlagType.ABUSIVE_LANGUAGE
+        else InterviewSession.TerminationReason.PROCTORING_VIOLATION
     )
 
     candidate_profile = resolve_candidate_profile(interview_session.candidate)
     fsm = InterviewFSM(session=interview_session, candidate_profile=candidate_profile)
-    interview_turn = fsm.terminate_for_violation(explanation=message)
+    interview_turn = fsm.terminate_for_violation(explanation=message, reason=termination_reason)
 
     return ProctoringActionResult(
         action=ProctoringActionResult.ACTION_TERMINATE,

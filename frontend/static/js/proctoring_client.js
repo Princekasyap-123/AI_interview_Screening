@@ -4,7 +4,12 @@
  * Second WebSocket connection (ProctoringConsumer) plus all client-side
  * detection:
  *   - tab switch / window blur / fullscreen exit / copy-paste / devtools
- *   - MediaPipe face mesh: no-face, multiple-faces, gaze, head pose
+ *   - MediaPipe face mesh (with iris landmarks): no-face, multiple-faces,
+ *     and LOOKING AWAY: head turn (yaw / pitch) + eye direction (iris
+ *     position inside each eye), compared to the candidate's own
+ *     screen-facing baseline. Looking away continuously for
+ *     LOOK_AWAY_WARN_MS sends "gaze_away" (a strike in flag_processor.py)
+ *     and repeats every LOOK_AWAY_REPEAT_MS while it continues.
  *   - face-api.js identity match (averaged reference + voting window +
  *     immediate re-check when a face reappears after being absent)
  *   - YOLOX object detection (object_detector.js, Web Worker; YOLOX-S on
@@ -70,9 +75,21 @@ const FACE_DETECTOR_INPUT_SIZE = 320;   // smaller = faster on CPU
 
 // ---- Generic timer-based flags ----
 const MIN_REPORTABLE_DURATION_MS = 1500;
-const GAZE_MIN_REPORTABLE_MS = 3000;
 const MULTI_FACE_CHECKIN_MS = 5000;
-const GAZE_AWAY_THRESHOLD = 0.08;
+
+// ---- Looking away (head turn + eye direction) ----
+// All limits are DEVIATIONS from the candidate's own baseline, measured
+// while they look at the screen (recalibratePose()). Tune with
+// window.PROCTOR_DEBUG = true (prints the live values every second).
+const LOOK_AWAY_WARN_MS = 3000;       // continuously away this long -> report
+const LOOK_AWAY_REPEAT_MS = 10000;    // still away -> report again (matches SAME_TYPE_COOLDOWN_SECONDS)
+const LOOK_RECOVER_SAMPLES = 3;       // ~0.6 s back on screen ends an episode
+const HEAD_YAW_LIMIT = 0.20;          // left/right turn (cheek-distance ratio, ~20-25 deg)
+const HEAD_PITCH_DOWN_LIMIT = 0.10;   // head tipped down (lap / phone / desk)
+const HEAD_PITCH_UP_LIMIT = 0.14;     // head tipped up
+const EYE_H_LIMIT = 0.14;             // eyes to the side (iris position, 0..1 of eye width)
+const EYE_DOWN_LIMIT = 0.16;          // eyes down (iris position, 0..1 of eye height)
+const HEAD_YAW_ABSOLUTE = 0.38;       // before the baseline exists: only a big turn counts
 
 // ---- Face mesh throttle (CPU saver) ----
 const FACE_MESH_MIN_INTERVAL_MS = 66;   // ~15 fps is plenty
@@ -180,6 +197,12 @@ class ProctoringClient {
     this._objectLastReport = { phone: 0, notes: 0 };
     this._objectLastScore = { phone: 0, notes: 0 };
     this._objectLastLabel = { phone: "", notes: "" };
+
+    // Looking away
+    this._awaySince = null;
+    this._awayDir = null;
+    this._awayRecover = 0;
+    this._lastAwayReportAt = 0;
 
     // Head pose / reading
     this._answering = false;
@@ -451,6 +474,13 @@ class ProctoringClient {
     this._poseBaseline = null;
     this._poseCal = [];
     this._resetReadingWindow();
+    this._resetLookAway();
+  }
+
+  _resetLookAway() {
+    this._awaySince = null;
+    this._awayDir = null;
+    this._awayRecover = 0;
   }
 
   _resetReadingWindow() {
@@ -487,7 +517,7 @@ class ProctoringClient {
 
     this._faceMesh.setOptions({
       maxNumFaces: 3,
-      refineLandmarks: false,
+      refineLandmarks: true,     // adds iris landmarks (468-477) for eye direction
       minDetectionConfidence: 0.5,
       minTrackingConfidence: 0.5,
     });
@@ -552,30 +582,10 @@ class ProctoringClient {
     }
 
     if (faceCount === 1) {
-      const landmarks = faces[0];
-      const gazeAway = this._estimateGazeAway(landmarks);
-      if (gazeAway) {
-        this._startTimer("gazeAway");
-      } else {
-        this._endTimer("gazeAway", "gaze_away", GAZE_MIN_REPORTABLE_MS);
-      }
-      this._samplePose(landmarks);
+      this._samplePose(faces[0]);
     } else {
-      this._activeTimers.gazeAway = null;
+      this._resetLookAway();      // no face / several faces are reported separately
     }
-  }
-
-  _estimateGazeAway(landmarks) {
-    const leftEye = landmarks[33];
-    const rightEye = landmarks[263];
-    const nose = landmarks[1];
-
-    if (!leftEye || !rightEye || !nose) return false;
-
-    const eyeMidpointX = (leftEye.x + rightEye.x) / 2;
-    const horizontalOffset = Math.abs(nose.x - eyeMidpointX);
-
-    return horizontalOffset > GAZE_AWAY_THRESHOLD;
   }
 
   // ------------------------------------------------------------------
@@ -595,7 +605,9 @@ class ProctoringClient {
     const leftEye = lm[33];
     const rightEye = lm[263];
     const chin = lm[152];
-    if (!nose || !leftEye || !rightEye || !chin) return null;
+    const cheekL = lm[234];
+    const cheekR = lm[454];
+    if (!nose || !leftEye || !rightEye || !chin || !cheekL || !cheekR) return null;
 
     const eyeMidX = (leftEye.x + rightEye.x) / 2;
     const eyeMidY = (leftEye.y + rightEye.y) / 2;
@@ -603,10 +615,88 @@ class ProctoringClient {
     const faceH = chin.y - eyeMidY;
     if (eyeDist < 0.02 || faceH < 0.02) return null;
 
-    return {
+    // Yaw from the nose's distance to each side of the face: 0 when
+    // facing the camera, towards +/-1 as the head turns. Uses real pixel
+    // proportions (x scaled by the video's aspect ratio).
+    const v = this._videoElement;
+    const aspect = v && v.videoHeight ? v.videoWidth / v.videoHeight : 4 / 3;
+    const dist = (a, b) => Math.hypot((a.x - b.x) * aspect, a.y - b.y);
+    const dL = dist(nose, cheekL);
+    const dR = dist(nose, cheekR);
+
+    const pose = {
       pitch: (nose.y - eyeMidY) / faceH,
       yaw: (nose.x - eyeMidX) / eyeDist,
+      yawR: (dL - dR) / (dL + dR),
+      gx: null,
+      gy: null,
     };
+
+    // Eye direction from the iris centre inside each eye (needs
+    // refineLandmarks). gx: 0 = image-left corner, 1 = image-right corner.
+    // gy: 0 = upper lid, 1 = lower lid.
+    if (lm.length >= 478) {
+      const eyes = [
+        { a: lm[33], b: lm[133], up: lm[159], low: lm[145], iris: lm[468] },
+        { a: lm[362], b: lm[263], up: lm[386], low: lm[374], iris: lm[473] },
+      ];
+      let gx = 0, gy = 0, n = 0;
+      for (const e of eyes) {
+        const x0 = Math.min(e.a.x, e.b.x), x1 = Math.max(e.a.x, e.b.x);
+        const h = e.low.y - e.up.y;
+        if (x1 - x0 < 0.005 || h < 0.002) continue;
+        gx += (e.iris.x - x0) / (x1 - x0);
+        gy += (e.iris.y - e.up.y) / h;
+        n++;
+      }
+      if (n) { pose.gx = gx / n; pose.gy = gy / n; }
+    }
+    return pose;
+  }
+
+  /**
+   * Is the candidate looking away from the screen right now?
+   * Returns null (on screen) or a direction: "left" / "right" / "down" / "up"
+   * plus the measured deviations (sent to the server for the recruiter).
+   */
+  _lookDirection(pose) {
+    const b = this._poseBaseline;
+    if (!b) {
+      // No baseline yet: only an obvious head turn counts.
+      if (Math.abs(pose.yawR) > HEAD_YAW_ABSOLUTE) {
+        return { dir: pose.yawR > 0 ? "right" : "left", source: "head", dYaw: pose.yawR };
+      }
+      return null;
+    }
+    const dYaw = pose.yawR - b.yawR;
+    const dPitch = pose.pitch - b.pitch;
+    const eyes = pose.gx !== null && b.gx !== null && b.gx !== undefined;
+    const dGx = eyes ? pose.gx - b.gx : 0;
+    const dGy = eyes ? pose.gy - b.gy : 0;
+    const info = { dYaw: +dYaw.toFixed(3), dPitch: +dPitch.toFixed(3), dGx: +dGx.toFixed(3), dGy: +dGy.toFixed(3) };
+
+    if (Math.abs(dYaw) > HEAD_YAW_LIMIT) return { dir: dYaw > 0 ? "right" : "left", source: "head", ...info };
+    if (dPitch > HEAD_PITCH_DOWN_LIMIT) return { dir: "down", source: "head", ...info };
+    if (dPitch < -HEAD_PITCH_UP_LIMIT) return { dir: "up", source: "head", ...info };
+    if (eyes && Math.abs(dGx) > EYE_H_LIMIT) return { dir: dGx > 0 ? "right" : "left", source: "eyes", ...info };
+    if (eyes && dGy > EYE_DOWN_LIMIT) return { dir: "down", source: "eyes", ...info };
+    return null;
+  }
+
+  _updateLookAway(now, look) {
+    if (!look) {
+      if (this._awaySince !== null && ++this._awayRecover >= LOOK_RECOVER_SAMPLES) this._resetLookAway();
+      return;
+    }
+    this._awayRecover = 0;
+    if (this._awaySince === null) this._awaySince = now;
+    this._awayDir = look.dir;
+    const durationMs = now - this._awaySince;
+    if (durationMs >= LOOK_AWAY_WARN_MS && now - this._lastAwayReportAt >= LOOK_AWAY_REPEAT_MS) {
+      this._lastAwayReportAt = now;
+      this._sendFlag("gaze_away", { duration_ms: durationMs, direction: look.dir, source: look.source,
+        d_yaw: look.dYaw, d_pitch: look.dPitch, d_gaze_x: look.dGx, d_gaze_y: look.dGy });
+    }
   }
 
   _samplePose(landmarks) {
@@ -617,15 +707,24 @@ class ProctoringClient {
     const pose = this._poseFromLandmarks(landmarks);
     if (!pose) return;
 
+    // Looking away runs all the time (also before the baseline exists).
+    const look = this._lookDirection(pose);
+    this._updateLookAway(now, look);
+
     if (!this._poseBaseline) {
-      this._poseCal.push(pose);
+      // Calibrate only on frames that are clearly screen-facing.
+      if (Math.abs(pose.yawR) < HEAD_YAW_ABSOLUTE / 2) this._poseCal.push(pose);
       if (this._poseCal.length >= POSE_CALIBRATION_SAMPLES) {
+        const eyeCal = this._poseCal.filter((p) => p.gx !== null);
         this._poseBaseline = {
           pitch: median(this._poseCal.map((p) => p.pitch)),
           yaw: median(this._poseCal.map((p) => p.yaw)),
+          yawR: median(this._poseCal.map((p) => p.yawR)),
+          gx: eyeCal.length ? median(eyeCal.map((p) => p.gx)) : null,
+          gy: eyeCal.length ? median(eyeCal.map((p) => p.gy)) : null,
         };
         this._poseCal = [];
-        console.log("[ProctoringClient] head-pose baseline set", this._poseBaseline);
+        console.log("[ProctoringClient] head-pose + eye baseline set", this._poseBaseline);
       }
       return;
     }
@@ -635,9 +734,15 @@ class ProctoringClient {
 
     if (window.PROCTOR_DEBUG && now - this._lastPoseDebugAt > 1000) {
       this._lastPoseDebugAt = now;
+      const b = this._poseBaseline;
       this._debug(
-        `pose dPitch=${dPitch.toFixed(3)} (down>${POSE_DOWN_DELTA}) ` +
-        `dYaw=${dYaw.toFixed(3)} (side>${POSE_SIDE_DELTA}) answering=${this._answering}`
+        `look dYaw=${(pose.yawR - b.yawR).toFixed(3)} (>${HEAD_YAW_LIMIT}) ` +
+        `dPitch=${dPitch.toFixed(3)} (down>${HEAD_PITCH_DOWN_LIMIT}, up<-${HEAD_PITCH_UP_LIMIT}) ` +
+        (pose.gx !== null && b.gx !== null
+          ? `eyesX=${(pose.gx - b.gx).toFixed(3)} (>${EYE_H_LIMIT}) eyesY=${(pose.gy - b.gy).toFixed(3)} (>${EYE_DOWN_LIMIT}) `
+          : "eyes=n/a ") +
+        `away=${look ? look.dir + "/" + look.source : "no"}` +
+        (this._awaySince ? ` for ${now - this._awaySince}ms` : "")
       );
     }
 

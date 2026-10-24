@@ -24,6 +24,11 @@ class InterviewSession(models.Model):
         CANDIDATE_LEFT = "candidate_left", "Candidate disconnected"
         CANDIDATE_ENDED = "candidate_ended", "Candidate ended interview early"
         TECHNICAL_ERROR = "technical_error", "Technical error"
+        ABUSIVE_LANGUAGE = "abusive_language", "Abusive or offensive language"
+
+    class JobRoleType(models.TextChoices):
+        BLUE_COLLAR = "blue_collar", "Blue-collar"
+        WHITE_COLLAR = "white_collar", "White-collar"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
@@ -34,6 +39,12 @@ class InterviewSession(models.Model):
     )
 
     job_description_text = models.TextField(blank=True)
+
+    job_role_type = models.CharField(
+        max_length=20,
+        choices=JobRoleType.choices,
+        default=JobRoleType.WHITE_COLLAR,
+    )
 
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.PENDING
@@ -80,6 +91,10 @@ class InterviewSession(models.Model):
     @property
     def has_reached_question_limit(self):
         return self.questions_asked_count >= self.max_questions
+
+    @property
+    def is_white_collar(self):
+        return self.job_role_type == self.JobRoleType.WHITE_COLLAR
 
 
 class Question(models.Model):

@@ -66,6 +66,8 @@ class TTSPlayer {
     this.speechPlayer = null;
     this.asideCache = new Map();     // text -> AudioBuffer ("Mm-hmm.", etc.)
     this.asideBusy = false;
+    this.asideSource = null;         // playing aside (Web Audio), stopped by _halt()
+    this.asideCancelled = false;
 
     this.listeners = {
       speakStart: [],    // fn(text)
@@ -166,13 +168,16 @@ class TTSPlayer {
   async sayAside(text) {
     if (this.asideBusy || !this.useServerVoice || !this._sessionId()) return false;
     this.asideBusy = true;
+    this.asideCancelled = false;
     try {
       for (const part of TTSPlayer._chunks(text)) {
+        if (this.asideCancelled) break;
         let buf = this.asideCache.get(part);
         if (!buf) {
           buf = await this._fetchChunk(part);
           if (part.length < 40) this.asideCache.set(part, buf);
         }
+        if (this.asideCancelled) break;     // the next question started meanwhile
         if (this.speechPlayer && this.speechPlayer.playSpeech) {
           await this.speechPlayer.playSpeech(buf, part);
         } else {
@@ -182,7 +187,8 @@ class TTSPlayer {
             const src = ctx.createBufferSource();
             src.buffer = buf;
             src.connect(this.gain);
-            src.onended = resolve;
+            src.onended = () => { if (this.asideSource === src) this.asideSource = null; resolve(); };
+            this.asideSource = src;
             src.start();
           });
         }
@@ -499,6 +505,11 @@ class TTSPlayer {
 
   _halt() {
     this._stopLevelMeter();
+    this.asideCancelled = true;                       // a real turn always wins over an aside
+    if (this.asideSource) {
+      try { this.asideSource.stop(); } catch (e) { /* already stopped */ }
+      this.asideSource = null;
+    }
     if (this.speechPlayer && this.speechPlayer.stopSpeech) this.speechPlayer.stopSpeech();
     if (this.clipPlayer && this.clipPlayer.stopClip) this.clipPlayer.stopClip();
     if (this.currentSource) {

@@ -103,11 +103,15 @@ class DashboardView(View):
         except (TypeError, ValueError):
             max_questions = 5
 
+        job_role_type = request.POST.get("job_role_type", "").strip()
+        if job_role_type not in InterviewSession.JobRoleType.values:
+            job_role_type = InterviewSession.JobRoleType.WHITE_COLLAR
+
         session = InterviewSession.objects.create(
             candidate=candidate,
             job_description_text=job_description_text,
             max_questions=max_questions,
+            job_role_type=job_role_type,
         )
-
         messages.success(request, f"Interview session created for {candidate.name}.")
         return redirect(f"/dashboard/?session_id={session.id}")

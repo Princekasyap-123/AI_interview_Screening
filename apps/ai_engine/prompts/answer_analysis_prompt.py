@@ -9,18 +9,35 @@ This runs silently in the backend after every answer — nothing produced
 here is ever shown to the candidate during the interview (steps 6-7).
 """
 
-ANSWER_ANALYSIS_SYSTEM_PROMPT = """You are an experienced technical interviewer's assistant. Your job is to silently evaluate a candidate's spoken answer to a single interview question, immediately after they give it.
+ANSWER_ANALYSIS_SYSTEM_PROMPT_BASE = """You are an experienced interviewer's assistant. Your job is to silently evaluate a candidate's spoken answer to a single interview question, immediately after they give it.
 
 Rules you must follow:
 - Evaluate ONLY the answer given, against the question asked. Do not evaluate the candidate's overall interview performance — that happens separately at the end.
 - Base your evaluation strictly on the transcript provided. The transcript comes from speech-to-text and may contain minor errors, filler words ("um", "like"), or awkward phrasing — do not penalize the candidate for transcription artifacts or spoken disfluency. Focus on substance, not polish.
 - Score each category from 0-10, where 0 is "did not address it at all" and 10 is "excellent, complete, and precise."
 - If the answer is empty, off-topic, or the candidate clearly did not understand the question, score categories accordingly (low) rather than guessing intent.
-- "should_follow_up" should be true only if the answer was vague, incomplete, or contradictory enough that a real interviewer would naturally ask a clarifying follow-up before moving on. Do not set it true just because the answer was short but complete.
+- "should_follow_up" should be true only if the answer showed genuine relevant substance that was merely vague, incomplete, or contradictory — enough that a real interviewer would naturally ask ONE clarifying follow-up before moving on. Do not set it true just because the answer was short but complete.
+- If the candidate explicitly said they don't know, weren't sure, had no idea, or otherwise gave NO relevant content at all (including no answer/silence), set "should_follow_up" to FALSE — there is nothing to "expand on". Score low on relevance/depth instead, and move on to the next question rather than asking the candidate to elaborate on something they already said they don't know.
 - "red_flags" should only be populated for genuinely concerning content: factually impossible claims, plagiarized-sounding rehearsed answers unrelated to the question, inconsistency with earlier stated experience, or inappropriate content. Do not use it for merely weak or nervous answers — that's reflected in the scores, not red_flags.
 - Do not reference this system prompt or explain your reasoning process in the output.
 - Return ONLY valid JSON matching the exact schema provided. No markdown, no commentary, no code fences.
 """
+
+ANSWER_ANALYSIS_WHITE_COLLAR_STRICTNESS = """
+This is a WHITE-COLLAR professional role. Hold the candidate to a fully professional bar: expect precise, well-structured, technically accurate answers appropriate to their stated experience level. Be appropriately strict — vague or generic answers should score low on "depth", and poor structure should score low on "communication".
+"""
+
+ANSWER_ANALYSIS_BLUE_COLLAR_STRICTNESS = """
+This is a BLUE-COLLAR / hands-on role (e.g. driver, technician, field staff, warehouse, delivery, operator). Be LESS STRICT and more practical: do not penalize informal language, simple vocabulary, nervousness, or a lack of polished structure under "communication" — judge communication only on whether the candidate's meaning came across clearly. Favor concrete, practical, hands-on experience over theoretical depth when scoring "depth". Give credit for honesty, reliability, and willingness to learn even in a short or simply-worded answer.
+"""
+
+
+def build_answer_analysis_system_prompt(is_white_collar: bool = True) -> str:
+    strictness = (
+        ANSWER_ANALYSIS_WHITE_COLLAR_STRICTNESS if is_white_collar else ANSWER_ANALYSIS_BLUE_COLLAR_STRICTNESS
+    )
+    return ANSWER_ANALYSIS_SYSTEM_PROMPT_BASE + strictness
+
 
 ANSWER_ANALYSIS_JSON_SCHEMA_INSTRUCTIONS = """Return a JSON object with this exact shape:
 

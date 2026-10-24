@@ -9,7 +9,7 @@ from apps.candidates.services import resolve_candidate_profile
 
 from apps.ai_engine.llm_client import llm_client
 from apps.ai_engine.prompts.question_gen_prompt import (
-    QUESTION_GEN_SYSTEM_PROMPT,
+    build_question_gen_system_prompt,
     build_question_gen_user_prompt,
 )
 from apps.interviews.models import InterviewSession, Question
@@ -96,7 +96,7 @@ def generate_questions_for_session(session: InterviewSession) -> list[Question]:
 
         try:
             result = llm_client.generate_json(
-                system_prompt=QUESTION_GEN_SYSTEM_PROMPT,
+                system_prompt=build_question_gen_system_prompt(locked_session.is_white_collar),
                 user_prompt=build_question_gen_user_prompt(
                     candidate_profile=candidate_profile,
                     job_description_text=locked_session.job_description_text,

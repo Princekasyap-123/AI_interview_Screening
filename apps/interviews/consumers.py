@@ -216,7 +216,18 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
             transcript_text=transcript_text,
             audio_ref="",
         )
+
+        # Abusive language: the FSM already closed the session. Tell the
+        # proctoring socket to show the "interview ended" screen, then
+        # close this socket like a proctoring termination does.
+        terminated_notice = turn.pop("_proctoring_terminated", None)
         await self._send_turn(turn)
+        if terminated_notice:
+            await self.channel_layer.group_send(
+                f"proctoring_{self.session_id}",
+                {"type": "proctoring.notify_terminated", **terminated_notice},
+            )
+            await self.close(code=4001)
 
     async def _handle_end_interview(self):
         """

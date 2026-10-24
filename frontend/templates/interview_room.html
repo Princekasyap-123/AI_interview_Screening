@@ -6,14 +6,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Interview Room — White Force</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<!-- three.js for the 3D interviewer (avatar3d_player.js + TalkingHead).
-     Must appear before any module is imported. -->
-<script type="importmap">
-{ "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
-} }
-</script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
 
 <!-- MediaPipe Face Mesh — used by proctoring_client.js for no-face /
@@ -405,19 +397,6 @@
     box-shadow: 0 12px 28px rgba(229, 83, 61, 0.45);
   }
 
-  #doneAnsweringBtn {
-    color: #fff;
-    border: none;
-    padding: 13px 24px;
-    background: linear-gradient(180deg, var(--accent-bright), var(--accent));
-    box-shadow: 0 10px 22px rgba(47, 107, 87, 0.32);
-    white-space: nowrap;
-  }
-  #doneAnsweringBtn:hover {
-    background: linear-gradient(180deg, #47977A, #2A604E);
-    box-shadow: 0 12px 26px rgba(47, 107, 87, 0.42);
-  }
-
   .fs-note {
     max-width: 1180px;
     width: 100%;
@@ -445,6 +424,59 @@
     padding: 20px;
   }
   .overlay.show { opacity: 1; pointer-events: all; }
+
+  /* ---------------- Interview rules (shown before the interview starts) ---------------- */
+  .rules-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    max-width: 620px;
+    width: 100%;
+    overflow: hidden;
+    box-shadow: var(--shadow-lg);
+    max-height: calc(100vh - 40px);
+    display: flex; flex-direction: column;
+  }
+  .rules-head {
+    padding: 24px 28px 20px;
+    color: #fff;
+    background:
+      radial-gradient(420px 160px at 85% -20%, rgba(255,255,255,0.18), rgba(255,255,255,0) 70%),
+      linear-gradient(135deg, var(--accent-bright), var(--accent));
+  }
+  .rules-head .eyebrow {
+    font-size: 11.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+    opacity: 0.85; margin-bottom: 6px;
+  }
+  .rules-head h2 { font-family: 'Source Serif 4', serif; font-size: 25px; font-weight: 500; }
+  .rules-head p { font-size: 13.5px; opacity: 0.9; margin-top: 6px; line-height: 1.5; }
+  .rules-list { list-style: none; padding: 18px 22px 6px; margin: 0; overflow-y: auto; }
+  .rules-list li {
+    display: flex; gap: 14px; align-items: flex-start;
+    padding: 11px 8px; border-bottom: 1px solid var(--border);
+    font-size: 14px; line-height: 1.5; color: var(--text);
+  }
+  .rules-list li:last-child { border-bottom: none; }
+  .rules-list .ri {
+    flex: 0 0 34px; height: 34px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; background: var(--accent-soft, rgba(47,107,87,0.1));
+  }
+  .rules-list li.strict .ri { background: var(--warn-bg); }
+  .rules-list b { font-weight: 600; }
+  .rules-list span { display: block; color: var(--text-dim); font-size: 13px; }
+  .rules-foot { padding: 16px 28px 24px; }
+  .rules-foot label {
+    display: flex; gap: 10px; align-items: center; cursor: pointer;
+    font-size: 13.5px; color: var(--text); margin-bottom: 14px;
+  }
+  .rules-foot input { width: 17px; height: 17px; accent-color: var(--accent); }
+  .rules-foot button {
+    width: 100%; color: #fff; border: none; padding: 14px 20px; font-size: 15px;
+    background: linear-gradient(180deg, var(--accent-bright), var(--accent));
+    box-shadow: 0 10px 22px rgba(47, 107, 87, 0.32);
+  }
+  .rules-foot button:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
 
   .warning-card {
     background: var(--panel);
@@ -600,31 +632,43 @@
   .proctoring-log-row .row-title { font-weight: 600; font-size: 12.5px; }
   .proctoring-log-row .row-detail { color: var(--text-dim); font-size: 11.5px; }
 
-  /* ---------- AI interviewer avatar (avatar_player.js) ---------- */
-  .avatar-stage { position: absolute; inset: 0; z-index: 0; display: none; overflow: hidden; }
-  .ai-panel.avatar-ready .avatar-stage { display: block; }
-  .ai-panel.avatar-ready .ai-mark { display: none; }
-
-  /* Two stacked looping videos (idle + talking) from avatar_player.js.
-     object-fit keeps it filling the stage at any size; all motion
-     (lips, blinks, head movement) is drawn by JS, not CSS. */
-  .avatar-character {
-    position: absolute; inset: 0; width: 100%; height: 100%; display: block;
-    object-fit: cover;
-    object-position: 50% 20%;
-    background: #1a1a1a;
-  }
-  .avatar-shade {
-    position: absolute; inset: 0; pointer-events: none;
+  /* ---------- AI interviewer: static frame (no avatar) ---------- */
+  /* The interviewer is shown as a calm branded frame: the WF mark with a
+     glow that follows the voice loudness (--voice, 0..1, set from
+     tts_player.js level events), a name plate, and subtitle captions. */
+  .ai-panel {
     background:
-      radial-gradient(ellipse at 50% 40%, rgba(0,0,0,0) 60%, rgba(0,0,0,0.28) 100%),
-      linear-gradient(to top, rgba(10,12,16,0.75) 0%, rgba(10,12,16,0.25) 22%, rgba(10,12,16,0) 40%);
+      radial-gradient(700px 380px at 50% 38%, rgba(62,138,111,0.22) 0%, rgba(62,138,111,0) 70%),
+      radial-gradient(900px 500px at 50% 40%, #1E2530 0%, var(--stage-bg) 72%);
+  }
+  .ai-panel .ai-mark {
+    width: 132px; height: 132px; font-size: 46px;
+    margin-top: -40px;
+    box-shadow:
+      0 0 0 calc(var(--voice, 0) * 26px) rgba(62, 138, 111, 0.22),
+      0 0 0 calc(var(--voice, 0) * 48px) rgba(62, 138, 111, 0.10),
+      0 18px 46px rgba(47, 107, 87, 0.5);
+    transition: box-shadow 0.08s linear;
+  }
+  .ai-name {
+    text-align: center; color: #fff; z-index: 2;
+    font-family: 'Source Serif 4', serif; font-size: 22px; font-weight: 500;
+  }
+  .ai-name span {
+    display: block; margin-top: 4px;
+    font-family: 'Inter', sans-serif; font-size: 12.5px; font-weight: 500;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    color: rgba(207, 232, 220, 0.75);
+  }
+  .ai-panel.listening-state .ai-name span::before {
+    content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 7px;
+    border-radius: 50%; background: #E5533D; vertical-align: 1px;
+    animation: live-dot 1.2s ease-in-out infinite;
   }
 
   /* Speaking: soft green ring around the whole stage */
   .ai-panel.speaking { box-shadow: inset 0 0 0 3px rgba(62, 138, 111, 0.9); }
 
-  .ai-panel.avatar-ready .panel-label,
   .ai-panel .panel-label {
     z-index: 3; color: #fff; font-weight: 600; font-size: 12px;
     top: 14px; left: 14px;
@@ -635,7 +679,7 @@
   }
 
   /* Captions: subtitle box at the bottom, clear of the camera PiP */
-  .ai-panel.avatar-ready .ai-caption {
+  .ai-panel .ai-caption {
     position: absolute;
     left: 20px;
     right: calc(min(max(23%, 170px), 280px) + 36px);
@@ -671,43 +715,7 @@
   .ai-speaking-badge i:nth-child(2) { animation-delay: 0.15s; }
   .ai-speaking-badge i:nth-child(3) { animation-delay: 0.3s; }
   .ai-speaking-badge span { margin-left: 5px; }
-  .ai-panel.avatar-ready.speaking .ai-speaking-badge { display: flex; }
-
-  /* 3D interviewer (avatar3d_player.js): office backdrop behind the WebGL canvas */
-  .ai-panel.avatar-3d .avatar-stage {
-    background: #d9d2c7 url("{% static 'images/interviewer3d_bg.jpg' %}") center / cover no-repeat;
-  }
-  .avatar3d-host { position: absolute; inset: 0; }
-  .avatar3d-host canvas { display: block; width: 100% !important; height: 100% !important; }
-  .ai-panel.avatar-3d .avatar-stage::after {
-    content: ""; position: absolute; inset: 0; pointer-events: none;
-    background:
-      radial-gradient(ellipse at 50% 40%, rgba(0,0,0,0) 60%, rgba(0,0,0,0.22) 100%),
-      linear-gradient(to top, rgba(10,12,16,0.7) 0%, rgba(10,12,16,0.2) 22%, rgba(10,12,16,0) 40%);
-  }
-
-  /* Real lip-sync: shown while the interviewer's video is being prepared */
-  .ai-preparing-badge {
-    position: absolute; top: 14px; right: 14px; z-index: 3;
-    display: none; align-items: center; gap: 4px;
-    padding: 7px 12px; border-radius: 999px;
-    background: rgba(10, 12, 16, 0.6);
-    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-    border: 1px solid rgba(255,255,255,0.16);
-    color: #fff; font-size: 12px; font-weight: 600;
-  }
-  .ai-preparing-badge i {
-    width: 5px; height: 5px; border-radius: 50%; background: #CFE8DC;
-    animation: av-dot 1.2s ease-in-out infinite;
-  }
-  .ai-preparing-badge i:nth-child(2) { animation-delay: 0.2s; }
-  .ai-preparing-badge i:nth-child(3) { animation-delay: 0.4s; }
-  .ai-preparing-badge span { margin-left: 5px; }
-  .ai-panel.avatar-ready.avatar-preparing:not(.speaking) .ai-preparing-badge { display: flex; }
-  @keyframes av-dot {
-    0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
-    40%           { opacity: 1;    transform: translateY(-3px); }
-  }
+  .ai-panel.speaking .ai-speaking-badge { display: flex; }
   @keyframes av-eq {
     0%, 100% { transform: scaleY(0.35); }
     50%      { transform: scaleY(1); }
@@ -726,8 +734,9 @@
     .room { padding: 8px; border-radius: 18px; }
     .stage { aspect-ratio: 3 / 4; max-height: none; }
     .cand-panel { width: 34%; min-width: 110px; right: 10px; bottom: auto; top: 10px; }
-    .ai-speaking-badge, .ai-preparing-badge { top: 52px; left: 14px; right: auto; }
-    .ai-panel.avatar-ready .ai-caption { right: 12px; left: 12px; bottom: 12px; font-size: 15px; }
+    .ai-speaking-badge { top: 52px; left: 14px; right: auto; }
+    .ai-panel .ai-caption { right: 12px; left: 12px; bottom: 12px; font-size: 15px; }
+    .ai-panel .ai-mark { width: 96px; height: 96px; font-size: 34px; margin-top: -90px; }
     .btn-end { min-width: 0; width: 100%; }
   }
 </style>
@@ -745,18 +754,10 @@
   <div class="room">
     <div class="stage">
       <div class="panel ai-panel" id="aiPanel">
-        <div class="avatar-stage" id="avatarStage"
-             data-avatar-idle="{% static 'video/avatar/interviewer_idle.mp4' %}?v=20261013b"
-             data-avatar-talk="{% static 'video/avatar/interviewer_talk.mp4' %}?v=20261013b"
-             data-avatar-idle-webm="{% static 'video/avatar/interviewer_idle.webm' %}?v=20261013b"
-             data-avatar-talk-webm="{% static 'video/avatar/interviewer_talk.webm' %}?v=20261013b"
-             data-avatar-poster="{% static 'video/avatar/interviewer_poster.jpg' %}?v=20261013b"
-             data-avatar3d-url="{% static 'models/avatar/interviewer3d.glb' %}?v=20261014"
-             data-th-module="{% static 'js/talkinghead/talkinghead.mjs' %}"></div>
         <div class="panel-label">AI Interviewer</div>
         <div class="ai-speaking-badge"><i></i><i></i><i></i><span>Speaking</span></div>
-        <div class="ai-preparing-badge"><i></i><i></i><i></i><span>Preparing response</span></div>
         <div class="ai-mark">WF</div>
+        <div class="ai-name">AI Interviewer<span>White Force</span></div>
         <div class="ai-caption" id="aiCaption">Getting ready…</div>
       </div>
 
@@ -779,12 +780,34 @@
       </div>
       <button class="btn-end" id="endBtn">End interview</button>
       <div class="dock-right">
-        <button id="doneAnsweringBtn" style="display:none;">I'm done answering</button>
       </div>
     </div>
   </div>
 
   <div class="fs-note" id="fsNote">Waiting for camera and microphone access…</div>
+
+  <div class="overlay" id="rulesOverlay">
+    <div class="rules-card">
+      <div class="rules-head">
+        <div class="eyebrow">White Force · AI Interview</div>
+        <h2>Before we begin</h2>
+        <p>This interview is proctored automatically. Please read the rules below. The interviewer will also read them out when you start.</p>
+      </div>
+      <ul class="rules-list">
+        <li><div class="ri">⛶</div><div><b>Stay in fullscreen on this tab.</b><span>Do not switch tabs, open other windows or exit fullscreen.</span></div></li>
+        <li><div class="ri">👁</div><div><b>Keep your face visible and look at the screen.</b><span>Looking away for more than a few seconds is recorded as a warning.</span></div></li>
+        <li><div class="ri">📵</div><div><b>No phones, notes, books or other people.</b><span>The camera checks for devices, papers and additional faces throughout.</span></div></li>
+        <li><div class="ri">⌨</div><div><b>No copying, pasting or developer tools.</b><span>These actions are detected and recorded.</span></div></li>
+        <li><div class="ri">🎙</div><div><b>Answer out loud, then pause.</b><span>When you stop speaking for a few seconds, the interviewer moves to the next question.</span></div></li>
+        <li class="strict"><div class="ri">⚠</div><div><b>Use respectful language at all times.</b><span>Abusive or offensive language ends the interview immediately.</span></div></li>
+        <li class="strict"><div class="ri">⏹</div><div><b>Repeated violations end the interview.</b><span>You will see a warning each time; after the limit, the session closes automatically.</span></div></li>
+      </ul>
+      <div class="rules-foot">
+        <label><input type="checkbox" id="rulesAgree"> I have read and agree to follow these rules.</label>
+        <button id="rulesStartBtn" disabled>Start interview</button>
+      </div>
+    </div>
+  </div>
 
   <div class="overlay" id="warningOverlay">
     <div class="warning-card">
@@ -820,12 +843,10 @@
         data-worker="{% static 'js/object_detect_worker.js' %}?v=20261013"
         data-model-accurate="{% static 'models/yolox_s.onnx' %}"
         data-model-fast="{% static 'models/yolox_tiny.onnx' %}"></script>
-<script src="{% static 'js/proctoring_client.js' %}?v=20261013"></script>
+<script src="{% static 'js/proctoring_client.js' %}?v=20261019c"></script>
 <script src="{% static 'js/proctoring_notifications.js' %}?v=20261013"></script>
-<script src="{% static 'js/tts_player.js' %}?v=20261014b"></script>
-<script src="{% static 'js/avatar_player.js' %}?v=20261014a"></script>
-<script src="{% static 'js/avatar3d_player.js' %}?v=20261014b"></script>
-<script src="{% static 'js/interview_assist.js' %}?v=20261014b"></script>
+<script src="{% static 'js/tts_player.js' %}?v=20261019b"></script>
+<script src="{% static 'js/interview_assist.js' %}?v=20261019e"></script>
 
 <script>
 const aiPanel = document.getElementById('aiPanel');
@@ -839,7 +860,6 @@ const candPlaceholder = document.getElementById('candPlaceholder');
 const fsNote = document.getElementById('fsNote');
 const muteBtn = document.getElementById('muteBtn');
 const endBtn = document.getElementById('endBtn');
-const doneAnsweringBtn = document.getElementById('doneAnsweringBtn');
 const warningOverlay = document.getElementById('warningOverlay');
 const terminatedOverlay = document.getElementById('terminatedOverlay');
 const warningDismissBtn = document.getElementById('warningDismissBtn');
@@ -856,11 +876,12 @@ const FLAG_LABELS = {
   devtools_opened: "Developer tools detected",
   no_face: "Face not detected",
   multiple_faces: "Multiple faces detected",
-  gaze_away: "Gaze moved away from screen",
+  gaze_away: "Looked away from the screen",
   face_mismatch: "Face does not match reference photo",
   phone_detected: "Phone or electronic device detected",
   notes_detected: "Notes or book detected",
   reading_suspected: "Possibly reading from outside the screen",
+  abusive_language: "Abusive language detected",
 };
 
 // Calls an optional ProctoringClient method only if it exists, and never
@@ -945,33 +966,18 @@ const proctoringClient = new ProctoringClient(SESSION_ID);
 
 const interviewAssist = window.InterviewAssist ? new InterviewAssist() : null;
 
-// Interviewer avatar: the 3D avatar (rendered live in the browser, lip-synced
-// to the Kokoro voice) if WebGL works; otherwise the video avatar; if that
-// fails too, the WF mark stays and every avatarPlayer call is a no-op.
-const avatarStage = document.getElementById('avatarStage');
-let avatarPlayer = window.Avatar3DPlayer ? new Avatar3DPlayer() : new AvatarPlayer();
-
-function wireAvatar() {
-  if ('speechPlayer' in ttsPlayer && avatarPlayer.playSpeech) {
-    ttsPlayer.speechPlayer = avatarPlayer;          // 3D: audio + lip-sync per sentence
-  } else if ('clipPlayer' in ttsPlayer && avatarPlayer.playClip) {
-    ttsPlayer.clipPlayer = avatarPlayer;            // video avatar: MuseTalk clips (GPU demo)
-  }
-  if (avatarPlayer.listenTo && interviewAssist && interviewAssist.avatarAnalyser) {
-    avatarPlayer.listenTo(interviewAssist.avatarAnalyser);
-  }
-}
-
-avatarPlayer.mount(avatarStage, aiPanel)
-  .then(wireAvatar)
-  .catch((avatarErr) => {
-    if (avatarPlayer instanceof AvatarPlayer) throw avatarErr;
-    console.warn('[avatar] 3D avatar unavailable, using the video avatar:', avatarErr);
-    aiPanel.classList.remove('avatar-ready', 'avatar-3d');
-    avatarPlayer = new AvatarPlayer();
-    return avatarPlayer.mount(avatarStage, aiPanel).then(wireAvatar);
-  })
-  .catch((avatarErr) => console.warn('[avatar] failed to mount, keeping WF mark:', avatarErr));
+// No avatar: the interviewer is a static branded frame. This object keeps
+// the same calls the rest of the page makes (speakStart, setVoiceLevel, …)
+// and only drives the frame: voice-reactive glow and the "listening" dot.
+const avatarPlayer = {
+  speakStart() { aiPanel.classList.remove('listening-state'); },
+  speakEnd() { aiPanel.style.setProperty('--voice', '0'); },
+  onChunk() {},
+  onBoundary() {},
+  setVoiceLevel(level) { aiPanel.style.setProperty('--voice', Math.min(1, Math.max(0, level)).toFixed(3)); },
+  setListening(on) { aiPanel.classList.toggle('listening-state', !!on); },
+  stop() { aiPanel.style.setProperty('--voice', '0'); aiPanel.classList.remove('listening-state'); },
+};
 
 let currentQuestionId = null;
 let currentQuestionText = '';
@@ -992,7 +998,7 @@ async function boot() {
     sttRecorder.init(webrtcClient.getStream());
     if (interviewAssist && interviewAssist.init(webrtcClient.getStream())) {
       if (avatarPlayer.listenTo) avatarPlayer.listenTo(interviewAssist.avatarAnalyser);
-      if (ttsPlayer.prefetchAsides) ttsPlayer.prefetchAsides(BACKCHANNEL_LINES.concat([NUDGE_LINE]));
+      if (ttsPlayer.prefetchAsides) ttsPlayer.prefetchAsides(BACKCHANNEL_LINES.concat([NUDGE_LINE, MOVE_ON_LINE], THANKS_LINES));
     }
 
     // Proctoring library init is wrapped separately so that if the
@@ -1015,8 +1021,8 @@ async function boot() {
     callProctoring('startObjectDetection', webrtcClient.getVideoElement());
     proctoringClient.startBrowserEventDetection();
 
-    fsNote.textContent = "Click anywhere to enter fullscreen and begin.";
-    document.body.addEventListener('click', enterFullscreenAndConnect, { once: true });
+    fsNote.textContent = '';
+    rulesOverlay.classList.add('show');
 
   } catch (err) {
     console.error('[boot] failed to initialize camera/mic:', err);
@@ -1025,13 +1031,49 @@ async function boot() {
   }
 }
 
+// --- Interview rules: shown on screen, then read out before the interview starts ---
+const RULES_SPOKEN =
+  "Welcome to your White Force AI interview. Before we begin, here are the rules. " +
+  "Please stay in fullscreen and do not switch tabs or open other windows. " +
+  "Keep your face clearly visible and look at the screen. Looking away for more than a few seconds is recorded as a warning. " +
+  "Phones, notes, books and other people are not allowed. Copying, pasting and developer tools are not allowed either. " +
+  "Please use respectful language at all times. Abusive language will end the interview immediately. " +
+  "Each rule break is recorded, and repeated violations will end the interview automatically. " +
+  "When you finish an answer, simply pause for a few seconds and I will move on. Let's begin.";
+const RULES_MAX_MS = 90000;   // safety net: never get stuck on the rules
+const rulesOverlay = document.getElementById('rulesOverlay');
+const rulesAgree = document.getElementById('rulesAgree');
+const rulesStartBtn = document.getElementById('rulesStartBtn');
+let rulesSpeaking = false;
+let rulesTimer = null;
+
+rulesAgree.addEventListener('change', () => { rulesStartBtn.disabled = !rulesAgree.checked; });
+rulesStartBtn.addEventListener('click', () => {
+  rulesOverlay.classList.remove('show');
+  enterFullscreenAndConnect();
+});
+
 async function enterFullscreenAndConnect() {
   await ProctoringClient.requestFullscreen();
   fsNote.textContent = '';
-  setUiState('connecting');
   startTimer();
 
+  // Proctoring starts now (rules apply while they are read out); the
+  // interview itself connects once the rules have been spoken.
   proctoringClient.connect();
+  callProctoring('recalibratePose');      // candidate is looking at the screen now
+  aiCaption.textContent = RULES_SPOKEN;
+  rulesSpeaking = true;
+  rulesTimer = setTimeout(finishRules, RULES_MAX_MS);
+  ttsPlayer.speak(RULES_SPOKEN);
+}
+
+function finishRules() {
+  if (!rulesSpeaking) return;
+  rulesSpeaking = false;
+  clearTimeout(rulesTimer);
+  aiCaption.textContent = 'Connecting…';
+  setUiState('connecting');
   interviewSocket.connect();
 }
 
@@ -1091,6 +1133,7 @@ if (ttsPlayer.listeners && ttsPlayer.listeners.chunkStart && ttsPlayer.listeners
 
 ttsPlayer.on('speakEnd', (text) => {
   avatarPlayer.speakEnd(text);
+  if (rulesSpeaking) { finishRules(); return; }
   if (isCompanyIntro) {
     isCompanyIntro = false;
     interviewSocket.sendReadyForQuestion();
@@ -1101,7 +1144,6 @@ ttsPlayer.on('speakEnd', (text) => {
   avatarPlayer.setListening(true);
   sttRecorder.startRecording();
   callProctoring('setAnswering', true);   // reading check runs only during answers
-  doneAnsweringBtn.style.display = 'inline-block';
   if (interviewAssist) interviewAssist.startAnswer();
 });
 
@@ -1113,9 +1155,14 @@ function stopAndSubmitAnswer() {
   if (interviewAssist) interviewAssist.stopAnswer();
   clearTimeout(answerTimeout);
   callProctoring('setAnswering', false);
-  doneAnsweringBtn.style.display = 'none';
   sttRecorder.stopRecording(currentQuestionId, interviewSocket)
     .then(() => {
+      // fill the gap while the next question is prepared (never silent)
+      const line = lastSubmitReason === 'no_answer'
+        ? MOVE_ON_LINE
+        : THANKS_LINES[Math.floor(Math.random() * THANKS_LINES.length)];
+      lastSubmitReason = null;
+      if (ttsPlayer.sayAside && !interviewEnded) ttsPlayer.sayAside(line);
       statusText.textContent = 'Answer submitted, thinking…';
       statusBar.classList.remove('active');
       candPanel.classList.remove('listening');
@@ -1126,7 +1173,8 @@ function stopAndSubmitAnswer() {
     });
 }
 
-doneAnsweringBtn.addEventListener('click', stopAndSubmitAnswer);
+// No "done answering" button: the answer ends automatically after a pause
+// (interview_assist.js), or after MAX_ANSWER_DURATION_MS as a safety net.
 
 // --- Conversational interviewer (interview_assist.js) ---
 // Auto-submits after a pause, says "Uh-huh." with a nod while the candidate
@@ -1134,6 +1182,11 @@ doneAnsweringBtn.addEventListener('click', stopAndSubmitAnswer);
 // Asides never emit speakStart/speakEnd, so recording and turns are untouched.
 const BACKCHANNEL_LINES = ['Uh-huh.', 'I see.', 'Okay.', 'Right.', 'Hmm, okay.', 'Yes, yes.', 'Got it.'];
 const NUDGE_LINE = "Take your time. Whenever you're ready, please go ahead.";
+// Spoken right after an answer ends, so the room is never silent while
+// the next question is being prepared. The next question interrupts it.
+const THANKS_LINES = ['Alright.', 'Okay.', 'Got it.'];
+const MOVE_ON_LINE = "No problem, let's move on to the next question.";
+let lastSubmitReason = null;
 
 function sayAside(text, { nod = false } = {}) {
   if (!ttsPlayer.sayAside || ttsPlayer.asideBusy) return Promise.resolve(false);
@@ -1143,7 +1196,27 @@ function sayAside(text, { nod = false } = {}) {
 }
 
 if (interviewAssist) {
-  interviewAssist.on('autoSubmit', () => stopAndSubmitAnswer());
+  interviewAssist.on('autoSubmit', (reason) => {
+    if (reason === 'abuse') return;          // handled by the 'abuse' event below
+    lastSubmitReason = reason;
+    stopAndSubmitAnswer();
+  });
+
+  // Abusive language heard live (Chrome/Edge): report it to the proctoring
+  // server, which ends the interview immediately (zero tolerance, see
+  // flag_processor.py). The answer is NOT submitted; the 'terminated'
+  // event from the server cleans everything up.
+  interviewAssist.on('abuse', ({ terms, excerpt }) => {
+    console.warn('[InterviewAssist] abusive language detected:', terms);
+    statusText.textContent = 'Ending the interview…';
+    callProctoring('_sendFlag', 'abusive_language', { terms: terms.join(', '), excerpt, source: 'browser_speech' });
+    // Safety net: if the server has not ended the interview within 4 s
+    // (e.g. the proctoring socket is down), submit the answer normally —
+    // the server checks every answer for abusive language too.
+    setTimeout(() => {
+      if (!interviewEnded && sttRecorder.isRecording) stopAndSubmitAnswer();
+    }, 4000);
+  });
 
   interviewAssist.on('countdown', (sec) => {
     if (!sttRecorder.isRecording) return;
@@ -1159,11 +1232,9 @@ if (interviewAssist) {
 
   interviewAssist.on('nudge', () => sayAside(NUDGE_LINE));
 
-  interviewAssist.on('repeatRequest', () => {
-    if (!currentQuestionText) return;
-    aiCaption.textContent = currentQuestionText;
-    sayAside('Sure. ' + currentQuestionText);
-  });
+  // "Can you repeat the question?" is handled by the SERVER (turn_intent.py):
+  // the reply is submitted after the pause and the interviewer repeats the
+  // question once. Handling it here too made the question play twice.
 }
 
 const originalStartRecording = sttRecorder.startRecording.bind(sttRecorder);
@@ -1183,6 +1254,7 @@ proctoringClient.on('flag', ({ flagType, metadata }) => {
     'tab_switch', 'window_blur', 'fullscreen_exit',
     'copy_paste', 'devtools_opened', 'no_face', 'multiple_faces',
     'face_mismatch', 'phone_detected', 'notes_detected', 'reading_suspected',
+    'gaze_away', 'abusive_language',
   ].includes(flagType);
 
   ProctoringNotifications.push({
