@@ -326,23 +326,33 @@ class TTSPlayer {
     }
 
     const chunks = TTSPlayer._chunks(text);
-    let next = this._fetchChunk(chunks[0]);
+    // Pipeline: every sentence is requested back to back, one right after the other,
+    // WITHOUT waiting for the previous one to be played. The server therefore keeps
+    // synthesising ahead while sentence 1 is still speaking, so there is no silent gap
+    // before sentence 2 (the old code asked for it only when sentence 1 had started playing).
+    const pending = [];
+    let chain = Promise.resolve();
+    chunks.forEach((chunkText, i) => {
+      pending[i] = chain.then(() => {
+        if (token !== this.token) throw new Error("superseded");
+        return this._fetchChunk(chunkText);
+      });
+      chain = pending[i].catch(() => {});           // a failed sentence must not block the next request
+      pending[i].catch(() => {});                   // handled when awaited
+    });
     let started = false;
 
     for (let i = 0; i < chunks.length; i++) {
       let buffer;
       try {
-        buffer = await next;
+        buffer = await pending[i];
       } catch (err) {
+        if (token !== this.token) return;
         if (!started) throw err;                    // nothing played yet: fall back to browser voice
         console.warn("[TTSPlayer] a sentence failed to load, ending early:", err);
         break;
       }
       if (token !== this.token) return;             // stopped / superseded
-      if (i + 1 < chunks.length) {
-        next = this._fetchChunk(chunks[i + 1]);
-        next.catch(() => {});                       // handled when awaited
-      }
 
       if (!started) {
         started = true;

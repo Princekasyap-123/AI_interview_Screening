@@ -270,7 +270,8 @@ LOGGING = {
 }
 LOGIN_URL = "/admin/login/"
 
-KOKORO_VOICE = "bf_emma"
+# Most natural Kokoro voices: af_heart, af_bella (US) / bf_emma (UK). Override with the KOKORO_VOICE env var.
+KOKORO_VOICE = os.environ.get("KOKORO_VOICE", "af_heart")
 
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^https://.*\.ngrok-free\.dev$",

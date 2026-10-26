@@ -105,7 +105,7 @@ class STTRecorder {
     // the server — and Whisper — faster.
     this.mediaRecorder = new MediaRecorder(this.audioOnlyStream, {
       mimeType: this.mimeType,
-      audioBitsPerSecond: 24000,
+      audioBitsPerSecond: 32000,
     });
 
     this.mediaRecorder.addEventListener("dataavailable", (event) => {

@@ -60,10 +60,10 @@
   const PAUSE_GUARD_MS = 15000;        // an aside can never keep detection paused longer
   const DEFAULTS = {
     minSpeechMs: 500,             // speech needed before auto-submit can happen (short answers like "yes" count)
-    submitSilenceMs: 2600,        // silence after a LONG answer that ends it
-    shortSubmitSilenceMs: 2000,   // ...after a SHORT one (< shortAnswerMs of speech): usually done, not thinking
+    submitSilenceMs: 2200,        // silence after a LONG answer that ends it (a half-finished sentence is continued by the server)
+    shortSubmitSilenceMs: 1500,   // ...after a SHORT one (< shortAnswerMs of speech): usually done, not thinking
     shortAnswerMs: 2500,
-    countdownFromMs: 1200,        // show the countdown after this much silence
+    countdownFromMs: 1000,        // show the countdown after this much silence
     initialSpeechMs: 0,           // speech already heard when the answer window opens (barge-in)
     bargeStartDelayMs: 1200,      // no barge-in during the first moments of the interviewer's voice
     bargeConfirmMs: 450,          // sustained speech needed to cut the interviewer off
@@ -74,8 +74,8 @@
     backchannelGapMs: 9000,
     backchannelStartMs: 5000,     // not in the first seconds of an answer
     backchannelChance: 0.6,
-    nudgeMs: 5000,                // no speech at all for 5 s -> interviewer says something
-    noAnswerMs: 11000,            // still nothing (asides not counted) -> move on
+    nudgeMs: 7000,                // no speech at all for 5 s -> interviewer says something
+    noAnswerMs: 14000,            // still nothing (asides not counted) -> move on
     maxRepeats: 2,
   };
 

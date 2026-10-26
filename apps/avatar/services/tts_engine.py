@@ -41,6 +41,28 @@ logger = logging.getLogger(__name__)
 
 MAX_TEXT_CHARS = 600  # one sentence/chunk per request (the frontend splits long text)
 
+_TTS_CHAR_MAP = str.maketrans({
+    "‘": "'", "’": "'", "ʼ": "'", "´": "'", "`": "'",
+    "“": '"', "”": '"',
+    "‐": "-", "‑": "-", "‒": "-",
+    "…": "...",
+    " ": " ", " ": " ", "​": "",
+})
+
+
+def normalize_for_tts(text: str) -> str:
+    """
+    LLM text is full of typographic characters (curly apostrophes, non-breaking
+    hyphens, em dashes). espeak/phonemizer chokes on them ("words count
+    mismatch" warnings): the word is read wrongly or a pause lands mid-phrase.
+    Plain ASCII punctuation reads cleanly. Applied before the cache key too,
+    so cached audio is shared between the typographic and plain spelling.
+    """
+    text = (text or "").translate(_TTS_CHAR_MAP)
+    text = text.replace("–", ", ").replace("—", ", ").replace(" - ", ", ")
+    text = " ".join(text.split())
+    return text.replace(" ,", ",").replace(",,", ",").strip()
+
 
 class TTSUnavailableError(Exception):
     """Kokoro or its model files are not available — caller should fall back."""
@@ -138,7 +160,7 @@ class KokoroTTSEngine:
     def synthesize(self, text: str, background: bool = False) -> bytes:
         """Returns 16-bit mono WAV bytes. Raises TTSUnavailableError / ValueError.
         background=True is for pre-synthesis: it yields to live requests."""
-        text = (text or "").strip()
+        text = normalize_for_tts(text)
         if not text:
             raise ValueError("empty text")
         if len(text) > MAX_TEXT_CHARS:

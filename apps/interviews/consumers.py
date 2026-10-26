@@ -18,7 +18,9 @@ from apps.candidates.services import resolve_candidate_profile
 from apps.interviews.models import InterviewSession
 from apps.interviews.services.echo_guard import is_echo
 from apps.interviews.services.interview_state import InterviewFSM, TurnAction
+from apps.interviews.services.speech_cleanup import looks_unfinished
 
+MAX_CONTINUATIONS = 2           # per question: how often an unfinished sentence may be waited for
 MAX_SILENT_ECHO_DROPS = 3        # per question; after that the normal "didn't catch that" path takes over
 
 logger = logging.getLogger(__name__)
@@ -99,6 +101,8 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
         # word-for-word copy of it is the mic hearing the speaker, not the candidate.
         self._recent_spoken = deque(maxlen=4)
         self._echo_ignores = {}      # question_id -> how many echoes were silently dropped
+        self._partial = {}           # question_id -> words heard so far in an answer that stopped mid-sentence
+        self._continuations = {}     # question_id -> how many times we kept listening
 
         self.group_name = f"interview_{self.session_id}"
         await self.channel_layer.group_add(self.group_name, self.channel_name)
@@ -279,6 +283,26 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
                 await self._send_turn(turn)
                 return
             transcript_text = ""      # keeps echoing: fall through to the "didn't catch that" path
+
+        # Mid-sentence stop ("...worked with Django and"): keep listening and join the
+        # next part to it, the way a person waits for the end of the thought.
+        qkey = str(question_id)
+        pending = self._partial.get(qkey, "")
+        if transcript_text:
+            combined = f"{pending} {transcript_text}".strip()
+            used = self._continuations.get(qkey, 0)
+            if used < MAX_CONTINUATIONS and content.get("reason") != "no_answer" and looks_unfinished(transcript_text):
+                self._partial[qkey] = combined
+                self._continuations[qkey] = used + 1
+                logger.info("Session %s: answer stopped mid-sentence (%r) — listening on.",
+                            self.session_id, transcript_text[-40:])
+                await self._send_turn({"action": "listen_again", "question_id": qkey, "continue": True})
+                return
+            transcript_text = combined
+            self._partial.pop(qkey, None)
+        elif pending:
+            transcript_text = pending           # nothing more came: what we have is the answer
+            self._partial.pop(qkey, None)
 
         # The browser heard speech but Whisper returned nothing (noise, a cough,
         # a very quiet voice): ask again instead of scoring silence as the answer.

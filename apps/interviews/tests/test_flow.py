@@ -21,6 +21,8 @@ from apps.interviews.services import answer_analyzer as aa
 from apps.interviews.services import turn_intent as ti
 from apps.interviews.services.abuse_filter import find_abusive_terms
 from apps.interviews.services.echo_guard import is_echo
+from apps.interviews.services.speech_cleanup import collapse_repeats, looks_unfinished
+from apps.avatar.services.tts_engine import normalize_for_tts
 from apps.interviews.services.interview_state import InterviewFSM, TurnAction
 
 PROFILE = {"name": "Mili Test", "skills": [], "experience_years": "3", "recent_projects": [], "role_level": "mid"}
@@ -438,4 +440,82 @@ class EchoOverSocketTests(TransactionTestCase):
             turn = await comm.receive_json_from()
         self.assertEqual(turn["action"], "speak_follow_up")
         self.assertIn("introduce yourself", turn["text"])
+        await comm.disconnect()
+
+
+class SpeechCleanupTests(TestCase):
+    def test_whisper_loop_is_collapsed_and_flagged(self):
+        text, looped = collapse_repeats("I am you actually I am you actually I am you actually")
+        self.assertEqual(text, "I am you actually")
+        self.assertTrue(looped)
+
+    def test_a_sentence_said_twice_is_collapsed_but_not_a_loop(self):
+        text, looped = collapse_repeats("I don't know anything about that. I don't know anything about that.")
+        self.assertEqual(text, "I don't know anything about that.")
+        self.assertFalse(looped)
+
+    def test_normal_speech_is_untouched(self):
+        for t in ["I have worked with Django and Celery for two years.", "very very good", "no no no", "yes"]:
+            self.assertEqual(collapse_repeats(t), (t, False))
+
+    def test_unfinished_sentences(self):
+        for t in ["I have worked with Django and", "I built the API, ", "Because", "I worked on the",
+                  "So I started with", "my role was um", "I use Python and..."]:
+            self.assertTrue(looks_unfinished(t), t)
+
+    def test_finished_sentences(self):
+        for t in ["I am a Java developer.", "I don't know that.", "Yes, I can.", "I think so.",
+                  "I worked on a payments system.", "What is the salary?", "Yes", "No"]:
+            self.assertFalse(looks_unfinished(t), t)
+
+    def test_tts_text_is_plain_ascii_punctuation(self):
+        out = normalize_for_tts("Walk\u2011through what you\u2019ve built \u2014 briefly\u2026")
+        self.assertEqual(out, "Walk-through what you've built, briefly...")
+
+
+@override_settings(CHANNEL_LAYERS={"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}})
+class MidSentenceTests(EchoOverSocketTests):
+    """Stopping in the middle of a sentence keeps the interviewer listening; the parts are joined."""
+
+    async def test_unfinished_answer_is_continued_and_joined(self):
+        s, comm, q1 = await self._open()
+        seen = {}
+
+        def fake_submit(self_fsm, question_id, transcript_text, audio_ref=""):
+            seen["text"] = transcript_text
+            return {"action": TurnAction.SPEAK_QUESTION, "question_id": str(question_id), "text": "Next."}
+
+        with mock.patch("apps.interviews.consumers.stt_client.transcribe",
+                        side_effect=["I have worked with Django and", "Celery for background jobs."]), \
+             mock.patch.object(InterviewFSM, "submit_answer", fake_submit):
+            await comm.send_json_to(self._audio(q1, reason="silence"))
+            await comm.receive_json_from()                       # ack
+            turn = await comm.receive_json_from()
+            self.assertEqual(turn["action"], "listen_again")
+            self.assertTrue(turn["continue"])
+            self.assertNotIn("text", seen)                       # nothing was scored yet
+
+            await comm.send_json_to(self._audio(q1, reason="silence"))
+            await comm.receive_json_from()
+            turn = await comm.receive_json_from()
+        self.assertEqual(seen["text"], "I have worked with Django and Celery for background jobs.")
+        self.assertEqual(turn["text"], "Next.")
+        await comm.disconnect()
+
+    async def test_silence_after_an_unfinished_part_submits_what_was_said(self):
+        s, comm, q1 = await self._open()
+        seen = {}
+
+        def fake_submit(self_fsm, question_id, transcript_text, audio_ref=""):
+            seen["text"] = transcript_text
+            return {"action": TurnAction.SPEAK_QUESTION, "question_id": str(question_id), "text": "Next."}
+
+        with mock.patch("apps.interviews.consumers.stt_client.transcribe", side_effect=["I worked on the", ""]), \
+             mock.patch.object(InterviewFSM, "submit_answer", fake_submit):
+            await comm.send_json_to(self._audio(q1, reason="silence"))
+            await comm.receive_json_from(); await comm.receive_json_from()
+            await comm.send_json_to(self._audio(q1, reason="no_answer"))
+            await comm.receive_json_from()
+            await comm.receive_json_from()
+        self.assertEqual(seen["text"], "I worked on the")
         await comm.disconnect()

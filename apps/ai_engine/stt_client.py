@@ -6,6 +6,8 @@ import re
 from django.conf import settings
 from groq import Groq
 
+from apps.interviews.services.speech_cleanup import collapse_repeats
+
 logger = logging.getLogger(__name__)
 
 # Whisper "hallucinates" these when it is fed silence or room noise.
@@ -83,11 +85,21 @@ class STTClient:
 
         try:
             with open(audio_file_path, "rb") as audio_file:
-                response = self.client.audio.transcriptions.create(
-                    file=(audio_file_path, audio_file.read()),
-                    **kwargs,
-                )
-            return self._clean(response)
+                audio_bytes = audio_file.read()
+
+            text, looped = collapse_repeats(self._clean(
+                self.client.audio.transcriptions.create(file=(audio_file_path, audio_bytes), **kwargs)
+            ))
+            if looped:
+                # Whisper got stuck repeating itself (quiet / noisy audio). One more
+                # try with a little randomness usually breaks the loop.
+                logger.info("STT loop detected (%r) — transcribing once more.", text[:60])
+                kwargs["temperature"] = 0.3
+                retry, still_looped = collapse_repeats(self._clean(
+                    self.client.audio.transcriptions.create(file=(audio_file_path, audio_bytes), **kwargs)
+                ))
+                text = "" if still_looped and len(retry.split()) <= 4 else (retry or text)
+            return text
 
         except FileNotFoundError as exc:
             logger.error("Audio file not found: %s", audio_file_path)

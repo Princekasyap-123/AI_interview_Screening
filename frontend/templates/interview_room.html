@@ -802,6 +802,7 @@
         <li class="strict"><div class="ri">⚠</div><div><b>Use respectful language at all times.</b><span>Abusive or offensive language ends the interview immediately.</span></div></li>
         <li class="strict"><div class="ri">⏹</div><div><b>Repeated violations end the interview.</b><span>You will see a warning each time; after the limit, the session closes automatically.</span></div></li>
       </ul>
+      <label style="display:flex;gap:8px;align-items:center;margin:12px 0 0;font-size:13px;opacity:.9"><input type="checkbox" id="headsetCheck"> I'm using headphones or earphones (lets me interrupt the interviewer; leave unticked if you use speakers).</label>
       <div class="rules-foot">
         <label><input type="checkbox" id="rulesAgree"> I have read and agree to follow these rules.</label>
         <button id="rulesStartBtn" disabled>Start interview</button>
@@ -834,7 +835,7 @@
 
 <script src="{% static 'js/interview_socket.js' %}?v=20261024a"></script>
 <script src="{% static 'js/webrtc_client.js' %}?v=20261024a"></script>
-<script src="{% static 'js/stt_recorder.js' %}?v=20261024a"></script>
+<script src="{% static 'js/stt_recorder.js' %}?v=20261026b"></script>
 <script>
   // Phones: always use the light YOLOX-Tiny detector (the heavy one drains the battery and stutters the call).
   if (window.IS_MOBILE_DEVICE) window.OBJECT_DETECTOR_FORCE = "fast";
@@ -850,8 +851,8 @@
         data-model-fast="{% static 'models/yolox_tiny.onnx' %}"></script>
 <script src="{% static 'js/proctoring_client.js' %}?v=20261026a"></script>
 <script src="{% static 'js/proctoring_notifications.js' %}?v=20261013"></script>
-<script src="{% static 'js/tts_player.js' %}?v=20261019b"></script>
-<script src="{% static 'js/interview_assist.js' %}?v=20261024a"></script>
+<script src="{% static 'js/tts_player.js' %}?v=20261026b"></script>
+<script src="{% static 'js/interview_assist.js' %}?v=20261026b"></script>
 
 <script>
 const aiPanel = document.getElementById('aiPanel');
@@ -1003,7 +1004,8 @@ let interjected = false;          // the candidate cut the interviewer off and i
 const IS_PHONE = !!window.IS_MOBILE_DEVICE;
 let usingHeadset = false;
 let listenToken = 0;              // cancels a pending "open the answer window" when the interviewer starts speaking again
-let bargeEnabled = !IS_PHONE;     // also switched off automatically if barge-ins keep turning out to be noise
+let bargeEnabled = false;         // interrupting by voice only with headphones (tick-box in the rules screen); also auto-off after repeated false alarms
+let thinkingAsideTimer = null;    // the short "Okay." filler, only played when the reply is slow
 let falseBarges = 0;
 let bargeRecording = false;       // recorder started tentatively on first voice, before the barge-in is confirmed
 let pendingListen = false;        // waiting for the candidate to unmute before the answer window opens
@@ -1018,7 +1020,7 @@ async function boot() {
     sttRecorder.init(webrtcClient.getStream());
     const micLabel = ((webrtcClient.getStream().getAudioTracks()[0] || {}).label || '');
     usingHeadset = /headset|headphone|earphone|earbud|airpods|buds|bluetooth/i.test(micLabel);
-    if (IS_PHONE) bargeEnabled = usingHeadset;
+    headsetCheck.checked = usingHeadset;
     console.log('[audio] mic =', micLabel || '(unknown)', '| headset =', usingHeadset, '| interrupt-by-voice =', bargeEnabled);
     if (interviewAssist && interviewAssist.init(webrtcClient.getStream())) {
       if (avatarPlayer.listenTo) avatarPlayer.listenTo(interviewAssist.avatarAnalyser);
@@ -1068,11 +1070,14 @@ const RULES_MAX_MS = 90000;   // safety net: never get stuck on the rules
 const rulesOverlay = document.getElementById('rulesOverlay');
 const rulesAgree = document.getElementById('rulesAgree');
 const rulesStartBtn = document.getElementById('rulesStartBtn');
+const headsetCheck = document.getElementById('headsetCheck');
 let rulesSpeaking = false;
 let rulesTimer = null;
 
 rulesAgree.addEventListener('change', () => { rulesStartBtn.disabled = !rulesAgree.checked; });
 rulesStartBtn.addEventListener('click', () => {
+  usingHeadset = headsetCheck.checked;
+  bargeEnabled = usingHeadset;
   rulesOverlay.classList.remove('show');
   enterFullscreenAndConnect();
 });
@@ -1103,6 +1108,7 @@ function finishRules() {
 
 interviewSocket.on('turn', (turn) => {
   console.log('[turn]', turn);
+  clearTimeout(thinkingAsideTimer);
   interjected = false;
 
   if (turn.action === 'speak_company_intro') {
@@ -1122,14 +1128,16 @@ interviewSocket.on('turn', (turn) => {
   } else if (turn.action === 'close_interview') {
     handleInterviewClose(turn.message);
   } else if (turn.action === 'listen_again') {
-    // The server threw away what it heard (the interviewer's own voice coming back through
-    // the mic): nothing to say, just keep the answer window open.
-    statusText.textContent = 'Listening…';
+    // Nothing for the interviewer to say: either the server threw away the interviewer's own
+    // voice (echo) or the candidate stopped mid-sentence ("continue") and we keep listening.
+    statusText.textContent = turn.continue ? 'Go on, I am listening…' : 'Listening…';
     if (interviewAssist) interviewAssist.stopAnswer();
     if (sttRecorder.isRecording) sttRecorder.discard();
     setTimeout(() => {
-      if (!interviewEnded && !sttRecorder.isRecording && !ttsPlayer.asideBusy) beginListening();
-    }, IS_PHONE && !usingHeadset ? 700 : 250);
+      if (!interviewEnded && !sttRecorder.isRecording && !ttsPlayer.asideBusy) {
+        beginListening(turn.continue ? { noAnswerMs: 5000, nudgeMs: 60000 } : undefined);
+      }
+    }, turn.continue ? 150 : (usingHeadset ? 250 : (IS_PHONE ? 700 : 450)));
   } else if (turn.action === 'error') {
     statusText.textContent = turn.message || 'Something went wrong.';
     retryListeningSoon();
@@ -1214,7 +1222,7 @@ if (ttsPlayer.listeners && ttsPlayer.listeners.chunkStart && ttsPlayer.listeners
   });
 }
 
-function beginListening() {
+function beginListening(assistOverrides) {
   if (interviewEnded || !currentQuestionId) return;
   if (micMuted) {
     // Don't dead-end: the answer window opens as soon as the mic is unmuted.
@@ -1227,7 +1235,7 @@ function beginListening() {
   avatarPlayer.setListening(true);
   sttRecorder.startRecording();
   callProctoring('setAnswering', true);   // reading check runs only during answers
-  if (interviewAssist) interviewAssist.startAnswer();
+  if (interviewAssist) interviewAssist.startAnswer(assistOverrides);
 }
 
 ttsPlayer.on('speakEnd', (text) => {
@@ -1241,11 +1249,11 @@ ttsPlayer.on('speakEnd', (text) => {
     interviewSocket.sendReadyForQuestion();
     return;
   }
-  if (IS_PHONE && !usingHeadset && !bargeRecording) {
-    // Loudspeaker next to the mic: wait a moment so the end of the interviewer's sentence
-    // (room reverb, Bluetooth/output delay) is not recorded as the candidate's answer.
+  if (!usingHeadset && !bargeRecording) {
+    // Loudspeakers: wait a moment so the end of the interviewer's sentence (room reverb,
+    // output delay) is not recorded as the candidate's answer.
     const token = ++listenToken;
-    setTimeout(() => { if (token === listenToken) beginListening(); }, 700);
+    setTimeout(() => { if (token === listenToken) beginListening(); }, IS_PHONE ? 700 : 450);
   } else {
     beginListening();   // (if a tentative recording is already running, startRecording() just ignores the second call)
   }
@@ -1286,11 +1294,16 @@ function stopAndSubmitAnswer() {
         return;
       }
       // fill the gap while the next question is prepared (never silent)
-      const line = lastSubmitReason === 'no_answer'
+      // A short "Okay." only when the reply is slow (> 1.8 s): a quick reply needs no filler, and a
+      // filler spoken at once talks over a candidate who was only pausing in mid-thought.
+      const wasNoAnswer = lastSubmitReason === 'no_answer';
+      const line = wasNoAnswer
         ? MOVE_ON_LINE
         : THANKS_LINES[Math.floor(Math.random() * THANKS_LINES.length)];
       lastSubmitReason = null;
-      if (ttsPlayer.sayAside && !interviewEnded) ttsPlayer.sayAside(line);
+      clearTimeout(thinkingAsideTimer);
+      const playFiller = () => { if (ttsPlayer.sayAside && !interviewEnded) ttsPlayer.sayAside(line); };
+      if (wasNoAnswer) playFiller(); else thinkingAsideTimer = setTimeout(playFiller, 1800);
       statusText.textContent = 'Answer submitted, thinking…';
       statusBar.classList.remove('active');
       candPanel.classList.remove('listening');
@@ -1354,9 +1367,10 @@ if (interviewAssist) {
       : `Pause detected. Submitting your answer in ${sec}s. Keep speaking to continue.`;
   });
 
+  // A silent nod, never a spoken "Uh-huh": a voice from the speakers in the middle of the
+  // candidate's sentence sounds unnatural and is picked up by the mic and transcribed.
   interviewAssist.on('backchannel', () => {
-    const line = BACKCHANNEL_LINES[Math.floor(Math.random() * BACKCHANNEL_LINES.length)];
-    sayAside(line, { nod: true });
+    if (avatarPlayer.nod) avatarPlayer.nod();
   });
 
   interviewAssist.on('nudge', () => sayAside(NUDGE_LINE));
