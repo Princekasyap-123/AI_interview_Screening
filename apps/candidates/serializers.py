@@ -73,4 +73,7 @@ class CandidateCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}"
             )
+        max_bytes = 5 * 1024 * 1024
+        if value and value.size > max_bytes:
+            raise serializers.ValidationError("Resume file is too large (maximum 5 MB).")
         return value

@@ -56,6 +56,14 @@ class ProctoringConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=4404)
             return
 
+        # Same token as the interview socket (?token=...): a session UUID alone is not enough.
+        from urllib.parse import parse_qs
+        token = (parse_qs(self.scope.get("query_string", b"").decode()).get("token") or [""])[0]
+        if not token or token != self.interview_session.access_token:
+            logger.warning("Proctoring WebSocket rejected — bad token for session %s", self.session_id)
+            await self.close(code=4403)
+            return
+
         self.interview_group_name = f"interview_{self.session_id}"
 
         self.proctoring_group_name = f"proctoring_{self.session_id}"

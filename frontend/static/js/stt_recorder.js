@@ -98,12 +98,19 @@ class STTRecorder {
       throw new Error("STTRecorder.init(sharedStream) must be called before startRecording().");
     }
 
-    this.audioChunks = [];
-    this.mediaRecorder = new MediaRecorder(this.audioOnlyStream, { mimeType: this.mimeType });
+    const chunks = [];           // per-recording array: a late chunk of a discarded recording can't leak into the next one
+    this.audioChunks = chunks;
+    // 24 kbps mono Opus is plenty for speech and keeps the upload small on
+    // mobile data (a 60 s answer is ~180 KB instead of ~500 KB), so it reaches
+    // the server — and Whisper — faster.
+    this.mediaRecorder = new MediaRecorder(this.audioOnlyStream, {
+      mimeType: this.mimeType,
+      audioBitsPerSecond: 24000,
+    });
 
     this.mediaRecorder.addEventListener("dataavailable", (event) => {
       if (event.data && event.data.size > 0) {
-        this.audioChunks.push(event.data);
+        chunks.push(event.data);
       }
     });
 
@@ -112,7 +119,21 @@ class STTRecorder {
     console.log("[STTRecorder] recording started");
   }
 
-  stopRecording(questionId, interviewSocket) {
+  /**
+   * Stops recording and throws the audio away (nothing is sent). Used when a
+   * barge-in turns out to be a cough / background noise.
+   */
+  discard() {
+    if (!this.isRecording || !this.mediaRecorder) return;
+    const recorder = this.mediaRecorder;
+    this.isRecording = false;
+    this.audioChunks = [];
+    try { recorder.stop(); } catch (e) { /* already stopped */ }
+    console.log("[STTRecorder] recording discarded");
+  }
+
+  /** extra: optional fields merged into the answer_submitted message, e.g. { interjected: true }. */
+  stopRecording(questionId, interviewSocket, extra = {}) {
     return new Promise((resolve, reject) => {
       if (!this.isRecording || !this.mediaRecorder) {
         reject(new Error("stopRecording called but no recording is in progress."));
@@ -134,8 +155,8 @@ class STTRecorder {
             const base64Audio = await this._blobToBase64(blob);
             const format = this._extensionFromMimeType(this.mimeType);
 
-            interviewSocket.submitAnswer(questionId, base64Audio, format);
-            resolve();
+            const sent = interviewSocket.submitAnswer(questionId, base64Audio, format, extra);
+            resolve(sent !== false);
           } catch (err) {
             console.error("[STTRecorder] failed to encode/submit audio:", err);
             reject(err);

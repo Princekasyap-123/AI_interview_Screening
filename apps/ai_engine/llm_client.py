@@ -47,12 +47,21 @@ class LLMClient:
     _REASONING_EFFORT_MODELS = ("openai/gpt-oss-120b", "openai/gpt-oss-20b")
 
     def __init__(self):
-        api_key = getattr(settings, "GROQ_API_KEY", None)
-        if not api_key:
-            raise RuntimeError(
-                "GROQ_API_KEY is not set. Add it to your .env and settings.py."
-            )
-        self.client = Groq(api_key=api_key)
+        # Created on first use, so importing this module (manage.py check,
+        # migrations, tests, DEBUG runs without a key) never fails.
+        self._client = None
+
+    @property
+    def client(self) -> Groq:
+        if self._client is None:
+            api_key = getattr(settings, "GROQ_API_KEY", None)
+            if not api_key:
+                raise RuntimeError(
+                    "GROQ_API_KEY is not set. Add it to your .env and settings.py."
+                )
+            # timeout/retries: a stuck call must not freeze a live interview turn.
+            self._client = Groq(api_key=api_key, timeout=25.0, max_retries=1)
+        return self._client
 
     def _chat(
         self,

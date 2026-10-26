@@ -1,10 +1,14 @@
 # apps/interviews/consumers.py
 
+import asyncio
 import base64
 import logging
 import os
 import uuid
+from collections import deque
+from urllib.parse import parse_qs
 
+from asgiref.sync import sync_to_async
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.conf import settings
@@ -12,13 +16,29 @@ from django.conf import settings
 from apps.ai_engine.stt_client import stt_client
 from apps.candidates.services import resolve_candidate_profile
 from apps.interviews.models import InterviewSession
+from apps.interviews.services.echo_guard import is_echo
 from apps.interviews.services.interview_state import InterviewFSM, TurnAction
+
+MAX_SILENT_ECHO_DROPS = 3        # per question; after that the normal "didn't catch that" path takes over
 
 logger = logging.getLogger(__name__)
 
 AUDIO_SCRATCH_DIR = os.path.join(settings.MEDIA_ROOT, "interview_audio_scratch")
 
 MAX_AUDIO_BYTES = 15 * 1024 * 1024
+
+# Work that mostly WAITS on the network (Groq STT / LLM calls inside the FSM)
+# must not run on Channels' single shared "thread-sensitive" thread, or every
+# candidate's turn queues behind everyone else's. With PostgreSQL each worker
+# thread gets its own connection, so it is safe to run them in parallel.
+# SQLite (local dev) allows one writer at a time, so keep it serialized there.
+_DB_ENGINE = settings.DATABASES["default"]["ENGINE"]
+_SERIALIZE_BLOCKING_WORK = _DB_ENGINE.endswith("sqlite3")
+
+
+def blocking(func):
+    """database_sync_to_async that runs in parallel worker threads on PostgreSQL."""
+    return database_sync_to_async(func, thread_sensitive=_SERIALIZE_BLOCKING_WORK)
 
 
 class InterviewConsumer(AsyncJsonWebsocketConsumer):
@@ -62,6 +82,24 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=4404)
             return
 
+        # The interview link carries session id + access token; the socket
+        # must present the same token (query string ?token=...), otherwise
+        # anyone who learns a session UUID could join someone else's interview.
+        token = (parse_qs(self.scope.get("query_string", b"").decode()).get("token") or [""])[0]
+        if not token or token != self.session.access_token:
+            logger.warning("WebSocket connect rejected — bad token for session %s", self.session_id)
+            await self.close(code=4403)
+            return
+
+        # One candidate message is processed at a time: overlapping submits
+        # (e.g. a barge-in right after an auto-submit) queue up instead of racing.
+        self._turn_lock = asyncio.Lock()
+
+        # What the interviewer said most recently: a transcript that is a
+        # word-for-word copy of it is the mic hearing the speaker, not the candidate.
+        self._recent_spoken = deque(maxlen=4)
+        self._echo_ignores = {}      # question_id -> how many echoes were silently dropped
+
         self.group_name = f"interview_{self.session_id}"
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
@@ -87,13 +125,20 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
     async def receive_json(self, content, **kwargs):
         msg_type = content.get("type")
 
+        if msg_type == "ping":                 # keep-alive from interview_socket.js
+            await self.send_json({"type": "pong"})
+            return
+
         try:
             if msg_type == "join":
-                await self._handle_join()
+                async with self._turn_lock:
+                    await self._handle_join()
             elif msg_type == "ready_for_question":
-                await self._handle_ready_for_question()
+                async with self._turn_lock:
+                    await self._handle_ready_for_question()
             elif msg_type == "answer_submitted":
-                await self._handle_answer_submitted(content)
+                async with self._turn_lock:
+                    await self._handle_answer_submitted(content)
             elif msg_type == "end_interview":
                 await self._handle_end_interview()
             else:
@@ -151,14 +196,14 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
             return
 
         if session.status == InterviewSession.Status.IN_PROGRESS:
-            await self.send_json({
-                "type": "info",
-                "message": "Reconnected. Please wait for your next question.",
-            })
+            # Reconnect: pick up exactly where the interview was.
+            fsm = await self._build_fsm(session)
+            turn = await blocking(fsm.resume_turn)()
+            await self._send_turn(turn)
             return
 
         fsm = await self._build_fsm(session)
-        turn = await database_sync_to_async(fsm.start)()
+        turn = await blocking(fsm.start)()
         await self._send_turn(turn)
 
     async def _handle_ready_for_question(self):
@@ -170,7 +215,7 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
         session = await self._refresh_session()
         fsm = await self._build_fsm(session)
 
-        turn = await database_sync_to_async(fsm.advance_to_first_question)()
+        turn = await blocking(fsm.advance_to_first_question)()
         await self._send_turn(turn)
 
     async def _handle_answer_submitted(self, content):
@@ -182,6 +227,7 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
         question_id = content.get("question_id")
         audio_base64 = content.get("audio_base64")
         audio_format = content.get("audio_format", "webm")
+        interjected = bool(content.get("interjected"))   # candidate talked over the interviewer
 
         if not question_id:
             await self.send_json({"type": "error", "message": "Missing question_id."})
@@ -197,6 +243,10 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json({"type": "error", "message": str(exc)})
             return
 
+        # Tell the browser right away that the audio arrived (it can show
+        # "thinking" and play a filler word) while STT + the LLM work.
+        await self.send_json({"type": "ack", "question_id": str(question_id)})
+
         try:
             transcript_text = await self._transcribe_audio(audio_path)
         except RuntimeError as exc:
@@ -211,7 +261,40 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
         session = await self._refresh_session()
         fsm = await self._build_fsm(session)
 
-        turn = await database_sync_to_async(fsm.submit_answer)(
+        # Echo: the transcript is just the interviewer's own words coming back
+        # through the microphone (phone speaker next to the mic). Never score it.
+        if transcript_text and is_echo(transcript_text, self._recent_spoken):
+            drops = self._echo_ignores.get(str(question_id), 0)
+            logger.info(
+                "Session %s: transcript is an echo of the interviewer (drop #%d): %r",
+                self.session_id, drops + 1, transcript_text[:80],
+            )
+            if drops < MAX_SILENT_ECHO_DROPS:
+                self._echo_ignores[str(question_id)] = drops + 1
+                if interjected:
+                    # the interviewer was cut off by its own echo: say the question again
+                    turn = await blocking(fsm.repeat_turn)(question_id)
+                else:
+                    turn = {"action": "listen_again", "question_id": str(question_id)}
+                await self._send_turn(turn)
+                return
+            transcript_text = ""      # keeps echoing: fall through to the "didn't catch that" path
+
+        # The browser heard speech but Whisper returned nothing (noise, a cough,
+        # a very quiet voice): ask again instead of scoring silence as the answer.
+        # (A silent answer where the browser heard NOTHING still moves on as before.)
+        if not (transcript_text or "").strip():
+            heard_speech = interjected or content.get("reason") in ("silence", "said_done")
+            if heard_speech:
+                turn = await blocking(fsm.no_speech_turn)(question_id)
+                if turn is None and interjected:
+                    turn = await blocking(fsm.repeat_turn)(question_id)
+                if turn is not None:
+                    logger.info("Session %s: empty transcript after speech — asking again.", self.session_id)
+                    await self._send_turn(turn)
+                    return
+
+        turn = await blocking(fsm.submit_answer)(
             question_id=question_id,
             transcript_text=transcript_text,
             audio_ref="",
@@ -243,7 +326,7 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
         session = await self._refresh_session()
         fsm = await self._build_fsm(session)
 
-        turn = await database_sync_to_async(fsm.end_interview_by_candidate)()
+        turn = await blocking(fsm.end_interview_by_candidate)()
         await self._send_turn(turn)
         await self.close(code=4000)
 
@@ -266,7 +349,7 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
     # Audio handling helpers
     # ------------------------------------------------------------------
 
-    @database_sync_to_async
+    @sync_to_async(thread_sensitive=False)
     def _save_audio_to_scratch(self, audio_base64: str, audio_format: str) -> str:
         try:
             audio_bytes = base64.b64decode(audio_base64, validate=True)
@@ -291,11 +374,11 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
 
         return filepath
 
-    @database_sync_to_async
+    @sync_to_async(thread_sensitive=False)
     def _transcribe_audio(self, audio_path: str) -> str:
         return stt_client.transcribe(audio_path)
 
-    @database_sync_to_async
+    @sync_to_async(thread_sensitive=False)
     def _cleanup_audio_file(self, audio_path: str) -> None:
         try:
             if audio_path and os.path.exists(audio_path):
@@ -308,12 +391,14 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
     # ------------------------------------------------------------------
 
     async def _send_turn(self, turn: dict):
+        action = turn.get("action", "")
+        action = getattr(action, "value", action)          # TurnAction is a str-Enum
+        if turn.get("text") and str(action).startswith("speak_"):
+            self._recent_spoken.append(turn["text"])
         await self.send_json({"type": "turn", **turn})
 
     async def _build_fsm(self, session: InterviewSession) -> InterviewFSM:
-        candidate_profile = await database_sync_to_async(resolve_candidate_profile)(
-            session.candidate
-        )
+        candidate_profile = await blocking(resolve_candidate_profile)(session.candidate)
         return InterviewFSM(session=session, candidate_profile=candidate_profile)
 
     @database_sync_to_async

@@ -37,7 +37,11 @@ class InterviewRoomView(View):
         session = get_object_or_404(
             InterviewSession, id=session_id, access_token=access_token
         )
-        return render(request, "interview_room.html", {"session_id": str(session.id)})
+        return render(
+            request,
+            "interview_room.html",
+            {"session_id": str(session.id), "access_token": session.access_token},
+        )
 
 
 class InterviewSessionCreateView(APIView):
@@ -239,7 +243,7 @@ def recruiter_dashboard(request):
             f"{base_url}/interview/{selected_session.id}/{selected_session.access_token}/"
         )
 
-    return render(request, "interviews/dashboard.html", {
+    return render(request, "dashboard.html", {
         "sessions": sessions,
         "selected_session": selected_session,
         "status_filter": status_filter,

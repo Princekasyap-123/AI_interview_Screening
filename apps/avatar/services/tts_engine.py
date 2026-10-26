@@ -30,6 +30,7 @@ import io
 import logging
 import os
 import threading
+import time
 import wave
 from pathlib import Path
 
@@ -57,6 +58,11 @@ class KokoroTTSEngine:
         # so synthesis calls are serialised. One chunk takes well under a
         # second on a normal CPU.
         self._synth_lock = threading.Lock()
+        # Live requests (a sentence the candidate is waiting for) go before
+        # background pre-synthesis: while any live request is waiting, the
+        # prefetch thread pauses between chunks instead of hogging the CPU.
+        self._urgent = 0
+        self._urgent_lock = threading.Lock()
 
         self.model_dir = Path(_setting("KOKORO_MODEL_DIR", Path(settings.BASE_DIR) / "models" / "kokoro"))
         self.model_file = _setting("KOKORO_MODEL_FILE", "kokoro-v1.0.onnx")
@@ -129,8 +135,9 @@ class KokoroTTSEngine:
         key = hashlib.sha256(f"{self.model_file}|{self.voice}|{self.speed}|{text}".encode("utf-8")).hexdigest()
         return self.cache_dir / f"{key}.wav"
 
-    def synthesize(self, text: str) -> bytes:
-        """Returns 16-bit mono WAV bytes. Raises TTSUnavailableError / ValueError."""
+    def synthesize(self, text: str, background: bool = False) -> bytes:
+        """Returns 16-bit mono WAV bytes. Raises TTSUnavailableError / ValueError.
+        background=True is for pre-synthesis: it yields to live requests."""
         text = (text or "").strip()
         if not text:
             raise ValueError("empty text")
@@ -142,10 +149,23 @@ class KokoroTTSEngine:
             return cache_file.read_bytes()
 
         kokoro = self.load()
-        with self._synth_lock:
-            samples, sample_rate = kokoro.create(
-                text, voice=self.voice, speed=self.speed, lang=self._lang(self.voice)
-            )
+        if background:
+            while self._urgent:                 # a candidate is waiting for audio: go first
+                time.sleep(0.03)
+        else:
+            with self._urgent_lock:
+                self._urgent += 1
+        try:
+            with self._synth_lock:
+                if cache_file.exists():         # another thread made it while we waited
+                    return cache_file.read_bytes()
+                samples, sample_rate = kokoro.create(
+                    text, voice=self.voice, speed=self.speed, lang=self._lang(self.voice)
+                )
+        finally:
+            if not background:
+                with self._urgent_lock:
+                    self._urgent -= 1
 
         pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
         buf = io.BytesIO()
@@ -159,9 +179,25 @@ class KokoroTTSEngine:
         try:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             cache_file.write_bytes(data)
+            self._prune_cache()
         except OSError as exc:
             logger.warning("Could not write TTS cache file %s: %s", cache_file, exc)
         return data
+
+    MAX_CACHE_FILES = 1500
+
+    def _prune_cache(self) -> None:
+        """Keeps the on-disk cache bounded: removes the oldest files beyond MAX_CACHE_FILES.
+        Checked on ~1 in 25 writes so it costs nothing per request."""
+        self._writes = getattr(self, "_writes", 0) + 1
+        if self._writes % 25:
+            return
+        files = sorted(self.cache_dir.glob("*.wav"), key=lambda f: f.stat().st_mtime)
+        for old in files[: max(0, len(files) - self.MAX_CACHE_FILES)]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
 
 
 tts_engine = KokoroTTSEngine()

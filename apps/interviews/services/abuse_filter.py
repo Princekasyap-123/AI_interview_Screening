@@ -28,17 +28,20 @@ import unicodedata
 _LATIN_PATTERNS = [
     # English
     r"\bfuck\w*", r"\bf+u+c+k+\w*", r"\bmotherf\w*", r"\bmofo\b",
-    r"\bbitch\w*", r"\bbastard\w*", r"\basshole\w*", r"\bcunt\w*",
-    r"\bwhore\w*", r"\bslut\w*", r"\bdickhead\w*", r"\bretard\w*",
-    r"\bnig+er\w*", r"\bfag+ot\w*", r"\bsisterf\w*",
+    # NOTE: "asshole" collapses to "ashole" (double s) before matching, so the
+    # pattern is written WITHOUT the double letter. "retard" only matches the
+    # whole words retard/retarded/retards, never "retardant".
+    r"\bbitch\w*", r"\bbastard\w*", r"\bashole\w*", r"\barsehole\w*", r"\bcunt\w*",
+    r"\bwhore\w*", r"\bslut\w*", r"\bdickhead\w*", r"\bretard(?:ed|s)?\b",
+    r"\bfag+ot\w*", r"\bsisterf\w*",
     # Hinglish (Roman script)
     r"\bma?d[ae]?rchod\w*", r"\bmadarchd\w*",
     r"\bb[ae]?h?[ae]n ?chod\w*", r"\bbh[ae]nchod\w*", r"\bbhnchod\w*",
     r"\bchutiy\w*", r"\bchutia\w*", r"\bchutiye\w*", r"\bchut\b",
     r"\bbhosd\w*", r"\bbhosr\w*",
     r"\bgandu\b", r"\bgand mar\w*", r"\bgand\b",
-    r"\blund\b", r"\blauda\b", r"\blavda\b", r"\blawda\b", r"\bloda\b", r"\blodu\b",
-    r"\brand(i|ii|iy[ao]n?)\b", r"\bharami\w*", r"\bharamzad\w*", r"\bharamkhor\w*",
+    r"\blauda\b", r"\blavda\b", r"\blawda\b", r"\bloda\b", r"\blodu\b",
+    r"\bharami\w*", r"\bharamzad\w*", r"\bharamkhor\w*",
     r"\bkutiya\w*", r"\bkamin[ae]\b", r"\bjhant\w*",
     r"\bteri ma ki\b", r"\bteri maa ki\b", r"\bteri behen ki\b",
     r"\bbsdk\b", r"\bbkl\b", r"\bmkc\b",
@@ -56,8 +59,15 @@ _DEVANAGARI_ROOTS = [
     "तेरी माँ की", "तेरी मां की", "तेरी बहन की",
 ]
 
+# Matched on the NOT-collapsed text so that the country names Nigeria / Niger
+# (which collapse to "niger...") are never mistaken for the slur.
+# "lund" (also a Swedish city/surname) and "randi" (also a first name) were
+# removed from the instant filter: the LLM intent check judges those in context.
+_RAW_PATTERNS = [r"\bnigg+(?:er|a|ah)s?\b", r"\bnigga\w*"]
+
 _LEET = str.maketrans({"@": "a", "4": "a", "1": "i", "!": "i", "0": "o", "3": "e", "$": "s", "5": "s", "7": "t"})
 _LATIN_RE = re.compile("|".join(_LATIN_PATTERNS))
+_RAW_RE = re.compile("|".join(_RAW_PATTERNS))
 _MASKED_RE = re.compile(r"\b[a-z]\*{2,}", re.IGNORECASE)
 
 
@@ -78,6 +88,9 @@ def find_abusive_terms(text: str) -> list[str]:
         found.append(masked.group(0))
     norm = _normalize_latin(text)
     for m in _LATIN_RE.finditer(norm):
+        found.append(m.group(0))
+    raw = re.sub(r"[^a-z\s]", " ", unicodedata.normalize("NFKC", text).lower().translate(_LEET))
+    for m in _RAW_RE.finditer(raw):
         found.append(m.group(0))
     deva = unicodedata.normalize("NFC", text)
     for root in _DEVANAGARI_ROOTS:

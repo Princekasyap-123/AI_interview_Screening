@@ -21,6 +21,15 @@
  *     -> "abuse" at once, mid-answer. Other browsers simply skip this part;
  *     1–3 still work, and the server checks every answer for abuse anyway.
  *
+ * 5. Barge-in (candidate talks WHILE the interviewer is speaking): after
+ *    startBargeMonitor() the same microphone is watched during the
+ *    interviewer's question. Sustained speech (>= bargeConfirmMs) louder than
+ *    the interviewer's own echo emits "voiceStart" (tentative, start
+ *    recording), then "bargeIn" (stop the interviewer's voice and listen), or
+ *    "bargeCancel" if it was only a cough / click. The reply is classified
+ *    by the server: a question gets an answer and the interviewer then
+ *    continues the question.
+ *
  * Voice activity is measured with a Web Audio AnalyserNode. The noise floor
  * is the 15th percentile of the last ~6 s of levels, so steady background
  * sound (fan, AC, laptop hum) becomes "silence" within seconds and never
@@ -50,9 +59,16 @@
   const NO_PAUSE_NOISE_MS = 20000;     // "speaking" 20 s without any pause = noise
   const PAUSE_GUARD_MS = 15000;        // an aside can never keep detection paused longer
   const DEFAULTS = {
-    minSpeechMs: 1500,            // speech needed before auto-submit can happen
-    submitSilenceMs: 3500,        // silence after speech that ends the answer (3-4 s)
-    countdownFromMs: 1500,        // show the countdown after this much silence
+    minSpeechMs: 500,             // speech needed before auto-submit can happen (short answers like "yes" count)
+    submitSilenceMs: 2600,        // silence after a LONG answer that ends it
+    shortSubmitSilenceMs: 2000,   // ...after a SHORT one (< shortAnswerMs of speech): usually done, not thinking
+    shortAnswerMs: 2500,
+    countdownFromMs: 1200,        // show the countdown after this much silence
+    initialSpeechMs: 0,           // speech already heard when the answer window opens (barge-in)
+    bargeStartDelayMs: 1200,      // no barge-in during the first moments of the interviewer's voice
+    bargeConfirmMs: 450,          // sustained speech needed to cut the interviewer off
+    bargeMarginDb: 12,            // must be this much louder than the interviewer's own echo
+    bargeMinDb: -45,              // ...and at least this loud
     backchannelMinRunMs: 2500,    // speech stretch before a backchannel is allowed
     backchannelPauseMs: [600, 1100],
     backchannelGapMs: 9000,
@@ -67,15 +83,17 @@
   // Patterns have no double letters because the text is collapsed first.
   const ABUSE_LATIN = new RegExp([
     "\\bfuck\\w*", "\\bmotherf\\w*", "\\bmofo\\b", "\\bbitch\\w*", "\\bbastard\\w*",
-    "\\basshole\\w*", "\\bcunt\\w*", "\\bwhore\\w*", "\\bslut\\w*", "\\bdickhead\\w*",
-    "\\bretard\\w*", "\\bniger\\w*", "\\bfagot\\w*", "\\bsisterf\\w*",
+    "\\bashole\\w*", "\\barsehole\\w*", "\\bcunt\\w*", "\\bwhore\\w*", "\\bslut\\w*", "\\bdickhead\\w*",
+    "\\bretard(?:ed|s)?\\b", "\\bfagot\\w*", "\\bsisterf\\w*",
     "\\bma?d[ae]?rchod\\w*", "\\bmadarchd\\w*", "\\bb[ae]?h?[ae]n ?chod\\w*", "\\bbh[ae]nchod\\w*",
     "\\bbhnchod\\w*", "\\bchutiy\\w*", "\\bchutia\\w*", "\\bchut\\b", "\\bbhosd\\w*", "\\bbhosr\\w*",
-    "\\bgandu\\b", "\\bgand mar\\w*", "\\bgand\\b", "\\blund\\b", "\\blauda\\b", "\\blavda\\b",
-    "\\blawda\\b", "\\bloda\\b", "\\blodu\\b", "\\brand(i|iy[ao]n?)\\b", "\\bharami\\w*",
+    "\\bgandu\\b", "\\bgand mar\\w*", "\\bgand\\b", "\\blauda\\b", "\\blavda\\b",
+    "\\blawda\\b", "\\bloda\\b", "\\blodu\\b", "\\bharami\\w*",
     "\\bharamzad\\w*", "\\bharamkhor\\w*", "\\bkutiya\\w*", "\\bkamin[ae]\\b", "\\bjhant\\w*",
     "\\bteri ma ki\\b", "\\bteri behen ki\\b", "\\bbsdk\\b", "\\bbkl\\b", "\\bmkc\\b",
   ].join("|"));
+  // Matched on the NOT-collapsed text so "Nigeria" / "Niger" never match the slur.
+  const ABUSE_RAW = /\bnigg+(?:er|a|ah)s?\b|\bnigga\w*/g;
   const ABUSE_DEVANAGARI = [
     "मादरचोद", "मादरजात", "बहनचोद", "भेनचोद", "भैनचोद", "बहनचो", "चूतिया", "चुतिया", "चूतिये",
     "चुतिये", "चूत", "भोसड़", "भोसड", "भोसडी", "गांडू", "गाँडू", "गांड", "गाँड", "लौड़ा", "लौडा",
@@ -96,6 +114,10 @@
     const re = new RegExp(ABUSE_LATIN.source, "g");
     let m;
     while ((m = re.exec(t))) found.push(m[0]);
+    const raw = text.normalize("NFKC").toLowerCase().replace(/[@4!10357$]/g, (c) => LEET[c] || c).replace(/[^a-z\s]/g, " ");
+    let r;
+    ABUSE_RAW.lastIndex = 0;
+    while ((r = ABUSE_RAW.exec(raw))) found.push(r[0]);
     const deva = text.normalize("NFC");
     for (const root of ABUSE_DEVANAGARI) if (deva.includes(root.normalize("NFC"))) found.push(root);
     return [...new Set(found)];
@@ -107,7 +129,9 @@
   class InterviewAssist {
     constructor(options = {}) {
       this.cfg = Object.assign({}, DEFAULTS, options);
+      this.runCfg = this.cfg;           // per-answer settings (see startAnswer overrides)
       this.handlers = {};
+      this.bargeTimer = null;
       this.ctx = null;
       this.analyser = null;
       this.avatarAnalyser = null;
@@ -147,14 +171,20 @@
       return true;
     }
 
-    startAnswer() {
+    /**
+     * overrides: per-answer settings, e.g. after a barge-in
+     *   { initialSpeechMs: 600, minSpeechMs: 400, submitSilenceMs: 1600, shortSubmitSilenceMs: 1600 }
+     */
+    startAnswer(overrides) {
       if (!this.ctx) return;
       if (this.ctx.state === "suspended") this.ctx.resume().catch(() => {});
+      this.stopBargeMonitor();
+      this.runCfg = Object.assign({}, this.cfg, overrides || {});
       const now = performance.now();
       this.active = true;
       this.paused = false;
       this.startedAt = now;
-      this.speechMs = 0;
+      this.speechMs = this.runCfg.initialSpeechMs || 0;
       this.runMs = 0;             // current/last continuous speech stretch
       this.voicedTicks = 0;
       this.lastVoiceAt = now;
@@ -201,6 +231,73 @@
       this.runMs = 0;
     }
 
+    // ---------------- barge-in: candidate talks over the interviewer ----------------
+
+    /** Call when the interviewer starts speaking a QUESTION (not the intro / closing). */
+    startBargeMonitor() {
+      if (!this.ctx || this.bargeTimer) return;
+      if (this.ctx.state === "suspended") this.ctx.resume().catch(() => {});
+      this.levels = this.levels || [];
+      this.bargeStart = performance.now();
+      this.bargeLevels = [];
+      this.bargeVoiceMs = 0;
+      this.bargeQuietMs = 0;
+      this.bargeTentative = false;
+      this.bargeTimer = setInterval(() => this._bargeTick(), TICK_MS);
+    }
+
+    /** Call when the interviewer stops speaking (or has been cut off). */
+    stopBargeMonitor() {
+      clearInterval(this.bargeTimer);
+      this.bargeTimer = null;
+      if (this.bargeTentative) { this.bargeTentative = false; this._emit("bargeCancel"); }
+    }
+
+    _bargeTick() {
+      if (!this.bargeTimer) return;      // stopped (barge-in already confirmed, or answer window open)
+      const now = performance.now();
+      const db = this._levelDb();
+      this.bargeLevels.push(db);
+      if (this.bargeLevels.length > 60) this.bargeLevels.shift();     // ~3 s
+      if (now - this.bargeStart < this.cfg.bargeStartDelayMs || this.bargeLevels.length < 20) return;
+
+      // The interviewer's own voice leaking into the mic (speakers) sets the
+      // "echo level" = median of the last ~3 s. The candidate's voice is much
+      // closer to the mic, so it clears echo + margin; syllable peaks of the
+      // interviewer don't last long enough to count (bargeConfirmMs).
+      const sorted = this.bargeLevels.slice().sort((a, b) => a - b);
+      const echo = sorted[Math.floor(sorted.length / 2)];
+      const room = this._noiseFloor();
+      const threshold = Math.max(room + this.cfg.bargeMarginDb, echo + this.cfg.bargeMarginDb, this.cfg.bargeMinDb);
+      const loud = db > threshold;
+
+      if (window.ASSIST_DEBUG && Math.round(now / 50) % 20 === 0) {
+        console.log(`[InterviewAssist] barge: level ${db.toFixed(1)} dB, threshold ${threshold.toFixed(1)} dB, voice ${this.bargeVoiceMs} ms`);
+      }
+
+      if (loud) {
+        this.bargeVoiceMs += TICK_MS;
+        this.bargeQuietMs = 0;
+        if (!this.bargeTentative && this.bargeVoiceMs >= 100) {
+          this.bargeTentative = true;
+          this._emit("voiceStart");
+        }
+        if (this.bargeVoiceMs >= this.cfg.bargeConfirmMs) {
+          const heardMs = this.bargeVoiceMs;
+          clearInterval(this.bargeTimer);
+          this.bargeTimer = null;
+          this.bargeTentative = false;
+          this._emit("bargeIn", { heardMs });
+        }
+      } else {
+        this.bargeQuietMs += TICK_MS;
+        if (this.bargeQuietMs > 250) {            // a gap longer than 250 ms ends the burst
+          this.bargeVoiceMs = 0;
+          if (this.bargeTentative) { this.bargeTentative = false; this._emit("bargeCancel"); }
+        }
+      }
+    }
+
     // ---------------- voice activity ----------------
 
     _levelDb() {
@@ -243,7 +340,7 @@
         this.speechMs += TICK_MS;
         // gaps between words (< the backchannel pause) don't break a speech stretch
         const gap = now - this.lastVoiceAt;
-        this.runMs = gap < this.cfg.backchannelPauseMs[0] ? this.runMs + gap : TICK_MS;
+        this.runMs = gap < this.runCfg.backchannelPauseMs[0] ? this.runMs + gap : TICK_MS;
         this.lastVoiceAt = now;
         this.pauseHandled = false;
         this._setCountdown(null);
@@ -253,28 +350,32 @@
       const silence = now - this.lastVoiceAt;
       const elapsed = now - this.startedAt;
 
-      // 1. end of answer
-      if (this.speechMs >= this.cfg.minSpeechMs) {
-        if (silence >= this.cfg.submitSilenceMs) { this._submit("silence"); return; }
-        if (silence >= this.cfg.countdownFromMs) {
-          this._setCountdown(Math.ceil((this.cfg.submitSilenceMs - silence) / 1000));
+      // 1. end of answer — a short utterance ("yes", a quick question) is
+      // finished sooner than a long answer, where pauses are thinking time.
+      if (this.speechMs >= this.runCfg.minSpeechMs) {
+        const needed = this.speechMs < this.runCfg.shortAnswerMs
+          ? this.runCfg.shortSubmitSilenceMs
+          : this.runCfg.submitSilenceMs;
+        if (silence >= needed) { this._submit("silence"); return; }
+        if (silence >= this.runCfg.countdownFromMs) {
+          this._setCountdown(Math.ceil((needed - silence) / 1000));
         }
       }
 
       // 2. backchannel in a natural pause
-      if (!this.pauseHandled && silence >= this.cfg.backchannelPauseMs[0] && silence <= this.cfg.backchannelPauseMs[1]) {
+      if (!this.pauseHandled && silence >= this.runCfg.backchannelPauseMs[0] && silence <= this.runCfg.backchannelPauseMs[1]) {
         this.pauseHandled = true;      // one decision per pause
-        if (this.runMs >= this.cfg.backchannelMinRunMs && elapsed >= this.cfg.backchannelStartMs
-            && now - this.lastBackchannel >= this.cfg.backchannelGapMs && Math.random() < this.cfg.backchannelChance) {
+        if (this.runMs >= this.runCfg.backchannelMinRunMs && elapsed >= this.runCfg.backchannelStartMs
+            && now - this.lastBackchannel >= this.runCfg.backchannelGapMs && Math.random() < this.runCfg.backchannelChance) {
           this.lastBackchannel = now;
           this._emit("backchannel");
         }
       }
 
       // 3. no answer at all
-      if (this.speechMs < this.cfg.minSpeechMs) {
-        if (!this.nudged && elapsed >= this.cfg.nudgeMs) { this.nudged = true; this._emit("nudge"); }
-        else if (elapsed >= this.cfg.noAnswerMs) this._submit("no_answer");
+      if (this.speechMs < this.runCfg.minSpeechMs) {
+        if (!this.nudged && elapsed >= this.runCfg.nudgeMs) { this.nudged = true; this._emit("nudge"); }
+        else if (elapsed >= this.runCfg.noAnswerMs) this._submit("no_answer");
     }
     }
 
@@ -345,14 +446,14 @@
 
       const words = text.split(/\s+/).length;
 
-      if (this.repeats < this.cfg.maxRepeats && words <= 14 && REPEAT_RE.test(text)) {
+      if (this.repeats < this.runCfg.maxRepeats && words <= 14 && REPEAT_RE.test(text)) {
         this.repeats++;
         this.ignoreBefore = e.results.length;     // don't match the same words again
         this._emit("repeatRequest", text);
         return;
       }
       const last = e.results[e.results.length - 1];
-      if (last.isFinal && this.speechMs >= this.cfg.minSpeechMs && DONE_RE.test(text)) {
+      if (last.isFinal && this.speechMs >= this.runCfg.minSpeechMs && DONE_RE.test(text)) {
         this._submit("said_done");
         this._emit("doneSaid", text);
       }

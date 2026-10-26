@@ -829,11 +829,16 @@
 
 <script>
   const SESSION_ID = "{{ session_id }}";
+  const ACCESS_TOKEN = "{{ access_token }}";
 </script>
 
-<script src="{% static 'js/interview_socket.js' %}?v=20261013"></script>
-<script src="{% static 'js/webrtc_client.js' %}?v=20261013"></script>
-<script src="{% static 'js/stt_recorder.js' %}?v=20261013"></script>
+<script src="{% static 'js/interview_socket.js' %}?v=20261024a"></script>
+<script src="{% static 'js/webrtc_client.js' %}?v=20261024a"></script>
+<script src="{% static 'js/stt_recorder.js' %}?v=20261024a"></script>
+<script>
+  // Phones: always use the light YOLOX-Tiny detector (the heavy one drains the battery and stutters the call).
+  if (window.IS_MOBILE_DEVICE) window.OBJECT_DETECTOR_FORCE = "fast";
+</script>
 <!-- Provides window.ObjectDetector: YOLOX (Apache-2.0) object detection
      via ONNX Runtime Web in a Web Worker, so it never clashes with
      face-api.js's bundled TensorFlow. Uses YOLOX-S on WebGPU when the
@@ -843,10 +848,10 @@
         data-worker="{% static 'js/object_detect_worker.js' %}?v=20261013"
         data-model-accurate="{% static 'models/yolox_s.onnx' %}"
         data-model-fast="{% static 'models/yolox_tiny.onnx' %}"></script>
-<script src="{% static 'js/proctoring_client.js' %}?v=20261019c"></script>
+<script src="{% static 'js/proctoring_client.js' %}?v=20261026a"></script>
 <script src="{% static 'js/proctoring_notifications.js' %}?v=20261013"></script>
 <script src="{% static 'js/tts_player.js' %}?v=20261019b"></script>
-<script src="{% static 'js/interview_assist.js' %}?v=20261019e"></script>
+<script src="{% static 'js/interview_assist.js' %}?v=20261024a"></script>
 
 <script>
 const aiPanel = document.getElementById('aiPanel');
@@ -961,7 +966,7 @@ function stopTimer() {
 const webrtcClient = new WebRTCClient();
 const sttRecorder = new STTRecorder();
 const ttsPlayer = new TTSPlayer();
-const interviewSocket = new InterviewSocket(SESSION_ID);
+const interviewSocket = new InterviewSocket(SESSION_ID, ACCESS_TOKEN);
 const proctoringClient = new ProctoringClient(SESSION_ID);
 
 const interviewAssist = window.InterviewAssist ? new InterviewAssist() : null;
@@ -989,6 +994,21 @@ let endInterviewFallbackTimer = null;
 // the (already released) recorder afterwards.
 let interviewEnded = false;
 
+// --- conversational flow state ---
+let speakingQuestion = false;     // the interviewer is currently speaking a question / reply (barge-in allowed)
+let interjected = false;          // the candidate cut the interviewer off and is now talking
+// Phones: the loudspeaker sits next to the mic and the browser's echo cancellation is weak there, so the
+// interviewer's own voice would be heard as "the candidate talking". Interrupting is therefore only
+// enabled on a phone when a headset / Bluetooth mic is detected (see boot()). PCs keep it on.
+const IS_PHONE = !!window.IS_MOBILE_DEVICE;
+let usingHeadset = false;
+let listenToken = 0;              // cancels a pending "open the answer window" when the interviewer starts speaking again
+let bargeEnabled = !IS_PHONE;     // also switched off automatically if barge-ins keep turning out to be noise
+let falseBarges = 0;
+let bargeRecording = false;       // recorder started tentatively on first voice, before the barge-in is confirmed
+let pendingListen = false;        // waiting for the candidate to unmute before the answer window opens
+let ignoreSpeakEndUntil = 0;      // browser-voice fallback fires speakEnd when we cut it off; ignore that one
+
 async function boot() {
   try {
     await webrtcClient.init(candidateVideo);
@@ -996,6 +1016,10 @@ async function boot() {
     candPlaceholder.style.display = "none";
 
     sttRecorder.init(webrtcClient.getStream());
+    const micLabel = ((webrtcClient.getStream().getAudioTracks()[0] || {}).label || '');
+    usingHeadset = /headset|headphone|earphone|earbud|airpods|buds|bluetooth/i.test(micLabel);
+    if (IS_PHONE) bargeEnabled = usingHeadset;
+    console.log('[audio] mic =', micLabel || '(unknown)', '| headset =', usingHeadset, '| interrupt-by-voice =', bargeEnabled);
     if (interviewAssist && interviewAssist.init(webrtcClient.getStream())) {
       if (avatarPlayer.listenTo) avatarPlayer.listenTo(interviewAssist.avatarAnalyser);
       if (ttsPlayer.prefetchAsides) ttsPlayer.prefetchAsides(BACKCHANNEL_LINES.concat([NUDGE_LINE, MOVE_ON_LINE], THANKS_LINES));
@@ -1079,6 +1103,7 @@ function finishRules() {
 
 interviewSocket.on('turn', (turn) => {
   console.log('[turn]', turn);
+  interjected = false;
 
   if (turn.action === 'speak_company_intro') {
     // No question_id, no "done answering" button — candidate just
@@ -1096,8 +1121,18 @@ interviewSocket.on('turn', (turn) => {
     ttsPlayer.handleTurn(turn);
   } else if (turn.action === 'close_interview') {
     handleInterviewClose(turn.message);
+  } else if (turn.action === 'listen_again') {
+    // The server threw away what it heard (the interviewer's own voice coming back through
+    // the mic): nothing to say, just keep the answer window open.
+    statusText.textContent = 'Listening…';
+    if (interviewAssist) interviewAssist.stopAnswer();
+    if (sttRecorder.isRecording) sttRecorder.discard();
+    setTimeout(() => {
+      if (!interviewEnded && !sttRecorder.isRecording && !ttsPlayer.asideBusy) beginListening();
+    }, IS_PHONE && !usingHeadset ? 700 : 250);
   } else if (turn.action === 'error') {
     statusText.textContent = turn.message || 'Something went wrong.';
+    retryListeningSoon();
   }
 });
 
@@ -1108,11 +1143,59 @@ interviewSocket.on('info', (message) => {
 interviewSocket.on('error', (message) => {
   console.error('[InterviewSocket error]', message);
   statusText.textContent = message;
+  retryListeningSoon();
+});
+
+// The server has the audio and is working on it: show "thinking" at once.
+interviewSocket.on('ack', () => {
+  statusText.textContent = 'Thinking…';
+});
+
+// An error must never leave the candidate staring at a frozen screen:
+// re-open the answer window so they can simply answer again.
+function retryListeningSoon() {
+  if (interviewEnded || !currentQuestionId) return;
+  setTimeout(() => {
+    if (!interviewEnded && !sttRecorder.isRecording && !ttsPlayer.asideBusy) beginListening();
+  }, 1500);
+}
+
+// --- connection drops: reconnect automatically, the server re-asks the open question ---
+function haltCandidateAudio() {
+  clearTimeout(answerTimeout);
+  speakingQuestion = false;
+  if (interviewAssist) { interviewAssist.stopBargeMonitor(); interviewAssist.stopAnswer(); }
+  if (sttRecorder.isRecording) sttRecorder.discard();
+  callProctoring('setAnswering', false);
+  ignoreSpeakEndUntil = Date.now() + 500;
+  ttsPlayer.stop();
+}
+interviewSocket.on('reconnecting', ({ attempt }) => {
+  if (interviewEnded) return;
+  haltCandidateAudio();
+  setUiState('connecting');
+  statusText.textContent = `Connection lost — reconnecting (try ${attempt})…`;
+});
+interviewSocket.on('reconnected', () => {
+  statusText.textContent = 'Reconnected. Continuing…';
+});
+interviewSocket.on('gaveUp', () => {
+  statusText.textContent = 'Connection lost. Please check your internet and refresh this page to continue.';
+});
+window.addEventListener('online', () => interviewSocket.reconnectNow());
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) interviewSocket.reconnectNow();
 });
 
 ttsPlayer.on('speakStart', (text) => {
+  listenToken += 1;               // the interviewer is talking again: cancel any pending answer-window opening
   setUiState('speaking');
   avatarPlayer.speakStart(text, ttsPlayer.rate);
+
+  // While the interviewer speaks a question / reply the candidate may talk
+  // over it (ask something, answer early): watch the mic for that.
+  speakingQuestion = !!currentQuestionId && !isCompanyIntro && !rulesSpeaking && !interviewEnded;
+  if (speakingQuestion && bargeEnabled && !micMuted && interviewAssist) interviewAssist.startBargeMonitor();
 });
 
 ttsPlayer.on('wordBoundary', ({ charIndex }) => {
@@ -1131,20 +1214,41 @@ if (ttsPlayer.listeners && ttsPlayer.listeners.chunkStart && ttsPlayer.listeners
   });
 }
 
+function beginListening() {
+  if (interviewEnded || !currentQuestionId) return;
+  if (micMuted) {
+    // Don't dead-end: the answer window opens as soon as the mic is unmuted.
+    pendingListen = true;
+    statusText.textContent = 'Your mic is muted — click "Unmute mic" to answer.';
+    return;
+  }
+  pendingListen = false;
+  setUiState('listening');
+  avatarPlayer.setListening(true);
+  sttRecorder.startRecording();
+  callProctoring('setAnswering', true);   // reading check runs only during answers
+  if (interviewAssist) interviewAssist.startAnswer();
+}
+
 ttsPlayer.on('speakEnd', (text) => {
   avatarPlayer.speakEnd(text);
+  if (Date.now() < ignoreSpeakEndUntil) return;     // this was a cut-off, not a real end
+  speakingQuestion = false;
+  if (interviewAssist) interviewAssist.stopBargeMonitor();
   if (rulesSpeaking) { finishRules(); return; }
   if (isCompanyIntro) {
     isCompanyIntro = false;
     interviewSocket.sendReadyForQuestion();
     return;
   }
-  if (interviewEnded || !currentQuestionId || micMuted) return;
-  setUiState('listening');
-  avatarPlayer.setListening(true);
-  sttRecorder.startRecording();
-  callProctoring('setAnswering', true);   // reading check runs only during answers
-  if (interviewAssist) interviewAssist.startAnswer();
+  if (IS_PHONE && !usingHeadset && !bargeRecording) {
+    // Loudspeaker next to the mic: wait a moment so the end of the interviewer's sentence
+    // (room reverb, Bluetooth/output delay) is not recorded as the candidate's answer.
+    const token = ++listenToken;
+    setTimeout(() => { if (token === listenToken) beginListening(); }, 700);
+  } else {
+    beginListening();   // (if a tentative recording is already running, startRecording() just ignores the second call)
+  }
 });
 
 const MAX_ANSWER_DURATION_MS = 120000;
@@ -1152,11 +1256,35 @@ let answerTimeout = null;
 
 function stopAndSubmitAnswer() {
   if (!sttRecorder.isRecording || !currentQuestionId) return;
+  const heardMs = interviewAssist ? interviewAssist.speechMs : 0;
   if (interviewAssist) interviewAssist.stopAnswer();
   clearTimeout(answerTimeout);
   callProctoring('setAnswering', false);
-  sttRecorder.stopRecording(currentQuestionId, interviewSocket)
-    .then(() => {
+
+  // A "barge-in" that was only a cough / a quick "sorry?" (< 0.9 s of speech):
+  // don't send it for scoring — just say the question again from the start.
+  if (interjected && heardMs < 900) {
+    interjected = false;
+    falseBarges += 1;
+    if (falseBarges >= 3) bargeEnabled = false;   // too many false alarms (noisy room / loud speakers)
+    sttRecorder.discard();
+    candPanel.classList.remove('listening');
+    ttsPlayer.speak(currentQuestionText);
+    return;
+  }
+  if (interjected) falseBarges = 0;
+  // reason = why the answer window closed ('silence' | 'said_done' | 'no_answer' | ...):
+  // lets the server tell "candidate said nothing" from "browser heard speech, STT got nothing".
+  const extra = { reason: lastSubmitReason || 'manual' };
+  if (interjected) extra.interjected = true;
+  interjected = false;
+
+  sttRecorder.stopRecording(currentQuestionId, interviewSocket, extra)
+    .then((sent) => {
+      if (sent === false) {
+        statusText.textContent = 'Connection lost — reconnecting. The question will be repeated.';
+        return;
+      }
       // fill the gap while the next question is prepared (never silent)
       const line = lastSubmitReason === 'no_answer'
         ? MOVE_ON_LINE
@@ -1170,6 +1298,7 @@ function stopAndSubmitAnswer() {
     .catch((err) => {
       console.error('[stopAndSubmitAnswer] failed:', err);
       statusText.textContent = 'Failed to submit answer — please try again.';
+      retryListeningSoon();
     });
 }
 
@@ -1231,6 +1360,42 @@ if (interviewAssist) {
   });
 
   interviewAssist.on('nudge', () => sayAside(NUDGE_LINE));
+
+  // --- Barge-in: the candidate talks while the interviewer is still speaking ---
+  // First sound -> start recording at once (so no words are lost); once it is
+  // clearly speech (>= 450 ms, louder than the interviewer's own echo) the
+  // interviewer stops mid-sentence and listens. The reply is then classified
+  // by the server: a question gets answered and the interviewer picks the
+  // question up again; an early answer is simply scored.
+  interviewAssist.on('voiceStart', () => {
+    if (!speakingQuestion || sttRecorder.isRecording || interviewEnded) return;
+    try { sttRecorder.startRecording(); bargeRecording = true; } catch (err) { bargeRecording = false; }
+  });
+  interviewAssist.on('bargeCancel', () => {
+    if (!bargeRecording) return;
+    bargeRecording = false;
+    clearTimeout(answerTimeout);
+    if (sttRecorder.isRecording) sttRecorder.discard();     // it was only a cough / click / echo peak
+  });
+  interviewAssist.on('bargeIn', ({ heardMs }) => {
+    if (!speakingQuestion || interviewEnded) return;
+    console.log('[barge-in] candidate interrupted after', heardMs, 'ms of speech');
+    speakingQuestion = false;
+    interjected = true;
+    ignoreSpeakEndUntil = Date.now() + 500;
+    ttsPlayer.stop();                                        // the interviewer stops mid-sentence
+    avatarPlayer.speakEnd();
+    if (!sttRecorder.isRecording) sttRecorder.startRecording();
+    bargeRecording = false;
+    setUiState('listening');
+    avatarPlayer.setListening(true);
+    callProctoring('setAnswering', true);
+    // Short pause is enough to end an interjection ("what is the salary?"): 1.7 s.
+    interviewAssist.startAnswer({
+      initialSpeechMs: heardMs, minSpeechMs: 400,
+      submitSilenceMs: 1700, shortSubmitSilenceMs: 1700,
+    });
+  });
 
   // "Can you repeat the question?" is handled by the SERVER (turn_intent.py):
   // the reply is submitted after the pause and the interviewer repeats the
@@ -1305,6 +1470,9 @@ muteBtn.addEventListener('click', () => {
   micMuted = !micMuted;
   webrtcClient.toggleMic(!micMuted);
   muteBtn.textContent = micMuted ? 'Unmute mic' : 'Mute mic';
+  if (micMuted && interviewAssist) interviewAssist.stopBargeMonitor();
+  // The question already finished while the mic was muted: open the answer window now.
+  if (!micMuted && pendingListen) beginListening();
 });
 
 endBtn.addEventListener('click', () => {
@@ -1343,7 +1511,11 @@ function handleInterviewClose(message) {
 
 function cleanupAllMedia() {
   clearTimeout(answerTimeout);
-  if (interviewAssist) interviewAssist.stopAnswer();
+  speakingQuestion = false;
+  if (interviewAssist) { interviewAssist.stopBargeMonitor(); interviewAssist.stopAnswer(); }
+  try { interviewSocket.disconnect(); } catch (err) { /* ignore */ }
+  try { proctoringClient.disconnect(); } catch (err) { /* ignore */ }
+  try { if (document.fullscreenElement) document.exitFullscreen(); } catch (err) { /* ignore */ }
   if (sttRecorder.isRecording) {
     sttRecorder.mediaRecorder && sttRecorder.mediaRecorder.stop();
   }

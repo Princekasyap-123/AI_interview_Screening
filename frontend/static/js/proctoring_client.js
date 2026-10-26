@@ -81,14 +81,18 @@ const MULTI_FACE_CHECKIN_MS = 5000;
 // All limits are DEVIATIONS from the candidate's own baseline, measured
 // while they look at the screen (recalibratePose()). Tune with
 // window.PROCTOR_DEBUG = true (prints the live values every second).
-const LOOK_AWAY_WARN_MS = 3000;       // continuously away this long -> report
+// On a PHONE the candidate holds the device in a hand (it tilts and drifts all the time) and the
+// camera sits above the text they read, so the same numbers would fire "looking away" constantly
+// and end the interview. Phones therefore get roomier limits.
+const _PHONE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+const LOOK_AWAY_WARN_MS = _PHONE ? 6000 : 3000;     // continuously away this long -> report
 const LOOK_AWAY_REPEAT_MS = 10000;    // still away -> report again (matches SAME_TYPE_COOLDOWN_SECONDS)
 const LOOK_RECOVER_SAMPLES = 3;       // ~0.6 s back on screen ends an episode
-const HEAD_YAW_LIMIT = 0.20;          // left/right turn (cheek-distance ratio, ~20-25 deg)
-const HEAD_PITCH_DOWN_LIMIT = 0.10;   // head tipped down (lap / phone / desk)
-const HEAD_PITCH_UP_LIMIT = 0.14;     // head tipped up
-const EYE_H_LIMIT = 0.14;             // eyes to the side (iris position, 0..1 of eye width)
-const EYE_DOWN_LIMIT = 0.16;          // eyes down (iris position, 0..1 of eye height)
+const HEAD_YAW_LIMIT = _PHONE ? 0.30 : 0.20;        // left/right turn (cheek-distance ratio, ~20-25 deg on PC)
+const HEAD_PITCH_DOWN_LIMIT = _PHONE ? 0.18 : 0.10; // head tipped down (lap / phone / desk)
+const HEAD_PITCH_UP_LIMIT = _PHONE ? 0.22 : 0.14;   // head tipped up
+const EYE_H_LIMIT = _PHONE ? 0.20 : 0.14;           // eyes to the side (iris position, 0..1 of eye width)
+const EYE_DOWN_LIMIT = _PHONE ? 0.24 : 0.16;        // eyes down (iris position, 0..1 of eye height)
 const HEAD_YAW_ABSOLUTE = 0.38;       // before the baseline exists: only a big turn counts
 
 // ---- Face mesh throttle (CPU saver) ----
@@ -118,7 +122,9 @@ const OBJECT_RULES = {
   "cell phone": { kind: "phone", label: "mobile phone", minScore: 0.4, minArea: 0 },
   "remote":     { kind: "phone", label: "handheld device", minScore: 0.45, minArea: 0 },
   "laptop":     { kind: "notes", label: "notebook / tablet / laptop held up", minScore: 0.3, minArea: 0.04 },
-  "tv":         { kind: "phone", label: "second screen", minScore: 0.65, minArea: 0.04 },
+  // "tv" (second screen) removed: a TV or monitor in the background of the room
+  // produced false phone_detected strikes. Re-add the line below if you want it back:
+  // "tv":      { kind: "phone", label: "second screen", minScore: 0.65, minArea: 0.04 },
   "book":       { kind: "notes", label: "book / notes", minScore: 0.35, minArea: 0 },
 };
 const OBJECT_FLAG_TYPES = { phone: "phone_detected", notes: "notes_detected" };
@@ -261,13 +267,21 @@ class ProctoringClient {
 
   connect() {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${protocol}//${window.location.host}/ws/proctoring/${this.sessionId}/`;
+    const token = typeof ACCESS_TOKEN !== "undefined" ? ACCESS_TOKEN : "";
+    const url = `${protocol}//${window.location.host}/ws/proctoring/${this.sessionId}/?token=${encodeURIComponent(token)}`;
 
     this.socket = new WebSocket(url);
 
     this.socket.addEventListener("open", () => {
       console.log("[ProctoringClient] connected");
       this._emit("open");
+      // The face check can finish before this socket opens: send the
+      // reference photo it had to hold back.
+      if (this._pendingReferencePhoto) {
+        const photo = this._pendingReferencePhoto;
+        this._pendingReferencePhoto = null;
+        this._sendReferencePhoto(photo);
+      }
     });
 
     this.socket.addEventListener("message", (event) => {
@@ -340,7 +354,8 @@ class ProctoringClient {
 
   _sendReferencePhoto(imageBase64) {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      console.warn("[ProctoringClient] cannot send reference photo, socket not open");
+      console.warn("[ProctoringClient] socket not open yet — holding the reference photo until it connects");
+      this._pendingReferencePhoto = imageBase64;
       return;
     }
     this.socket.send(JSON.stringify({

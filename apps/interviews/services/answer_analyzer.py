@@ -3,6 +3,7 @@
 import logging
 import re
 
+from django.conf import settings
 from django.utils import timezone
 
 from apps.ai_engine.llm_client import llm_client
@@ -52,52 +53,82 @@ class AnswerAnalysisError(Exception):
     """Raised when answer analysis fails or returns malformed data."""
 
 
-def analyze_answer(
-    question: Question,
+def build_full_transcript(question: Question, new_text: str) -> str:
+    """
+    The text that is analysed and stored for this question. On the first
+    answer it is just the new transcript. On a follow-up it is
+    "<first answer>\n[Follow-up] <new answer>", so the follow-up adds to the
+    first answer instead of overwriting it (recruiter and final rating see both).
+    """
+    new_text = (new_text or "").strip()
+    prior = (
+        Answer.objects.filter(question_id=question.id)
+        .values_list("transcript_text", flat=True)
+        .first()
+    )
+    prior = (prior or "").strip()
+    if not prior:
+        return new_text
+    if not new_text:
+        return prior
+    return f"{prior}\n[Follow-up] {new_text}"
+
+
+def run_answer_analysis(
+    *,
+    question_text: str,
+    topic_tag: str,
     transcript_text: str,
     candidate_profile: dict,
-    audio_ref: str = "",
-) -> Answer:
+    is_white_collar: bool,
+) -> dict:
     """
-    Analyzes a candidate's answer to a single question and persists the
-    result as an Answer row.
-
-    This is called once per question, right after STT produces the
-    transcript. It does NOT decide what happens next (follow-up vs. move
-    on) — that's interview_state.py's job, using the should_follow_up
-    flag this function stores in analysis_json.
-
-    Raises AnswerAnalysisError on failure. Callers should catch this and
-    still let the interview continue — a failed analysis on one answer
-    should never crash the whole session. See _build_fallback_analysis
-    for what gets stored when that happens.
+    The LLM half of analyze_answer(): NO database access, safe to run in a
+    worker thread in parallel with the intent check (see InterviewFSM.submit_answer).
+    Never raises: any LLM / validation problem returns a fallback analysis.
+    An empty transcript is not sent to the LLM at all.
     """
-    now = timezone.now()
+    if not (transcript_text or "").strip():
+        return {
+            "relevance": 0,
+            "depth": 0,
+            "communication": 0,
+            "should_follow_up": False,
+            "follow_up_reason": "",
+            "notes": "No speech was detected for this question.",
+            "red_flags": [],
+        }
 
     try:
         result = llm_client.generate_json(
-            system_prompt=build_answer_analysis_system_prompt(question.session.is_white_collar),
+            system_prompt=build_answer_analysis_system_prompt(is_white_collar),
             user_prompt=build_answer_analysis_user_prompt(
-                question_text=question.text,
-                question_topic_tag=question.topic_tag,
+                question_text=question_text,
+                question_topic_tag=topic_tag,
                 answer_transcript=transcript_text,
                 candidate_profile=candidate_profile,
             ),
+            model=getattr(settings, "ANSWER_ANALYSIS_MODEL", None),
+            reasoning_effort="low",
+            max_tokens=1500,
         )
         analysis = _validate_analysis(result)
-
-    except (RuntimeError, ValueError) as exc:
-        logger.error(
-            "Answer analysis failed for question %s: %s — storing fallback.",
-            question.id,
-            exc,
-        )
+    except (RuntimeError, ValueError, AnswerAnalysisError) as exc:
+        logger.error("Answer analysis failed: %s — storing fallback.", exc)
         analysis = _build_fallback_analysis(reason=str(exc))
 
-    analysis = _apply_no_knowledge_override(analysis, transcript_text)
+    return _apply_no_knowledge_override(analysis, transcript_text)
 
+
+def save_answer(
+    question: Question,
+    transcript_text: str,
+    analysis: dict,
+    audio_ref: str = "",
+) -> Answer:
+    """The database half of analyze_answer(): persists the (already combined) transcript."""
     score = _compute_aggregate_score(analysis)
-
+    now = timezone.now()
     answer, _ = Answer.objects.update_or_create(
         question=question,
         defaults={
@@ -109,16 +140,36 @@ def analyze_answer(
             "analyzed_at": timezone.now(),
         },
     )
-
     logger.info(
-        "Analyzed answer for question %s (session %s): score=%.1f follow_up=%s",
+        "Saved answer for question %s (session %s): score=%s follow_up=%s",
         question.id,
         question.session_id,
-        score if score is not None else -1,
+        score,
         analysis.get("should_follow_up"),
     )
-
     return answer
+
+
+def analyze_answer(
+    question: Question,
+    transcript_text: str,
+    candidate_profile: dict,
+    audio_ref: str = "",
+) -> Answer:
+    """
+    Analyses a candidate's answer to one question and persists it as an
+    Answer row (convenience wrapper: build_full_transcript + run_answer_analysis
+    + save_answer, run one after another). Never raises on LLM problems.
+    """
+    full = build_full_transcript(question, transcript_text)
+    analysis = run_answer_analysis(
+        question_text=question.text,
+        topic_tag=question.topic_tag,
+        transcript_text=full,
+        candidate_profile=candidate_profile,
+        is_white_collar=question.session.is_white_collar,
+    )
+    return save_answer(question, full, analysis, audio_ref=audio_ref)
 
 
 def _validate_analysis(result: dict) -> dict:

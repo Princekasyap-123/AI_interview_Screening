@@ -1,38 +1,67 @@
 # apps/interviews/services/interview_state.py
 
 import logging
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 
+from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
 from apps.interviews.models import Answer, InterviewSession, Question
-from apps.interviews.services.answer_analyzer import analyze_answer
+from apps.interviews.services.answer_analyzer import (
+    build_full_transcript,
+    run_answer_analysis,
+    save_answer,
+)
 from apps.interviews.services.question_generator import (
     QuestionGenerationError,
     generate_questions_for_session,
 )
 from apps.interviews.services.turn_intent import (
+    REPEAT_REPLY,
     INTENT_ABUSIVE,
     INTENT_CANDIDATE_QUESTION,
     INTENT_CLARIFICATION,
+    INTENT_ANSWER,
     INTENT_OFF_TOPIC,
     INTENT_REPEAT,
+    INTENT_UNCLEAR,
     OFF_TOPIC_REPLY,
-    REPEAT_REPLY,
+    UNCLEAR_REPLY,
     TurnIntent,
-    classify_reply,
+    classify_fast,
+    classify_reply_llm,
 )
 
 logger = logging.getLogger(__name__)
 
-MAX_FOLLOW_UPS_PER_QUESTION = 1
+MAX_FOLLOW_UPS_PER_QUESTION = getattr(settings, "MAX_FOLLOW_UPS_PER_QUESTION", 1)
 
 MAX_ADVANCE_ATTEMPTS = 25
 
 # How many times the candidate may ask to repeat / clarify / ask their own
 # question on ONE question before their next reply is treated as the answer.
 MAX_CANDIDATE_QUERIES_PER_QUESTION = 3
+# Hard cap including "repeat" / "couldn't hear" turns, so a noisy room can never loop forever.
+MAX_CANDIDATE_QUERIES_TOTAL = 6
+QUERY_LIMIT_REPLY = (
+    "I'm not able to take more questions right now — the recruiting team will "
+    "be happy to answer them after the interview. Please give your answer to this one."
+)
+
+# Words that normally start a spoken question / instruction. Only these get
+# lower-cased when the candidate's first name is put in front ("Rahul, tell me…");
+# names, acronyms and "I" ("Python…", "SQL…", "I'd…") keep their capital letter.
+_LOWERCASE_STARTERS = frozenset({
+    "tell", "what", "how", "why", "can", "could", "would", "will", "walk", "describe",
+    "explain", "please", "let's", "so", "now", "have", "has", "do", "does", "did", "which",
+    "where", "when", "who", "give", "share", "talk", "you", "your", "in", "if", "suppose",
+    "imagine", "since", "given", "as", "is", "are", "was", "were", "thank", "great", "okay",
+    "alright", "first", "next", "lastly", "finally", "could", "briefly", "think", "consider",
+})
 
 ABUSE_TERMINATION_MESSAGE = (
     "This interview has ended because abusive or offensive language was "
@@ -51,12 +80,18 @@ COMPANY_INTRO_TEXT = (
 )
 
 
+_QUERY_INTENTS = (
+    INTENT_REPEAT, INTENT_CLARIFICATION, INTENT_CANDIDATE_QUESTION, INTENT_OFF_TOPIC, INTENT_UNCLEAR,
+)
+
+
 class TurnAction(str, Enum):
     SPEAK_COMPANY_INTRO = "speak_company_intro"
     SPEAK_INTRO = "speak_intro"
     SPEAK_QUESTION = "speak_question"
     SPEAK_FOLLOW_UP = "speak_follow_up"
     AWAIT_ANSWER = "await_answer"
+    LISTEN_AGAIN = "listen_again"      # nothing to say: just reopen the answer window (echo dropped)
     CLOSE_INTERVIEW = "close_interview"
     ERROR = "error"
 
@@ -123,32 +158,40 @@ class InterviewFSM:
 
     def _prefetch_speech(self) -> None:
         """
-        Synthesizes the company intro, every question, and every question
-        prefixed with the fixed "repeat" reply (exactly as they will be
-        spoken, name included) in the background, so each plays
-        immediately instead of waiting for TTS. The repeat-combo is
-        pre-warmed too because "Of course." alone is under 40 chars and
-        gets MERGED into the next sentence by the chunker — so without
-        this, "can you repeat that?" always hit a cold cache even though
-        the question text itself was already warm. Best effort only.
+        Synthesizes the company intro and every question (exactly as they will
+        be spoken, name included) in the background at session start, so each
+        plays immediately instead of waiting for TTS on the CPU. The "repeat" /
+        "off-topic" variants of a question are NOT made here (that tripled the
+        start-up CPU load and delayed the first real sentence); they are made
+        when that question is actually spoken (see _prefetch_variants).
+        Best effort only.
         """
         try:
             from apps.avatar.services.tts_prefetch import prefetch_in_background
-            from apps.interviews.services.turn_intent import OFF_TOPIC_REPLY, REPEAT_REPLY
 
             question_texts = [
                 self._personalize(q.text) for q in self.session.questions.order_by("order")
             ]
-            texts = (
-                [COMPANY_INTRO_TEXT]
-                + question_texts
-                + [f"{REPEAT_REPLY} {t}" for t in question_texts]
-                + [f"{OFF_TOPIC_REPLY} Let's continue — {t}" for t in question_texts]
-            )
-            prefetch_in_background(texts)
+            prefetch_in_background([COMPANY_INTRO_TEXT] + question_texts)
         except Exception as exc:
             logger.warning("TTS prefetch could not start for session %s: %s", self.session.id, exc)
 
+    def _prefetch_variants(self, spoken_text: str) -> None:
+        """
+        While a question is being spoken, pre-make the lines used if the
+        candidate asks to repeat it or goes off-topic. "Of course." alone is
+        under 40 chars and gets MERGED into the next sentence by the chunker,
+        so the combined text is what must be warm.
+        """
+        try:
+            from apps.avatar.services.tts_prefetch import prefetch_in_background
+
+            prefetch_in_background([
+                f"{REPEAT_REPLY} {spoken_text}",
+                f"{OFF_TOPIC_REPLY} Let's continue — {spoken_text}",
+            ])
+        except Exception as exc:
+            logger.warning("TTS variant prefetch failed for session %s: %s", self.session.id, exc)
 
     def advance_to_first_question(self) -> dict:
         if self.session.status != InterviewSession.Status.IN_PROGRESS:
@@ -175,7 +218,7 @@ class InterviewFSM:
                 self.session.id,
                 intro_question.asked_at,
             )
-            return self._current_turn()
+            return {"action": TurnAction.AWAIT_ANSWER}       # no-op for the frontend
 
         return self._speak_question_turn(intro_question, is_intro=True)
 
@@ -199,31 +242,59 @@ class InterviewFSM:
                 "message": "Unrecognized question — please rejoin the interview.",
             }
 
-        # What is this reply? (abuse / repeat / clarification / candidate's
-        # own question / normal answer). Never raises.
-        intent = classify_reply(self._last_spoken_text(question), transcript_text)
+        transcript_text = (transcript_text or "").strip()
+        last_spoken = self._last_spoken_text(question)
+        is_first_answer_to_question = not question.has_answer
+
+        # What gets analysed / stored: on a follow-up, the first answer + the
+        # follow-up (never overwrite the first answer).
+        full_transcript = build_full_transcript(question, transcript_text)
+        analysis_kwargs = dict(
+            question_text=question.text,
+            topic_tag=question.topic_tag,
+            transcript_text=full_transcript,
+            candidate_profile=self.candidate_profile,
+            is_white_collar=self.session.is_white_collar,
+        )
+
+        # --- Latency: the intent check and the answer analysis are two
+        # independent LLM calls. When the reply needs an LLM intent check,
+        # both run AT THE SAME TIME (the analysis is speculative and simply
+        # unused if the reply turns out to be a question / repeat request).
+        pool = None
+        analysis_future = None
+        intent = classify_fast(transcript_text)
+        if intent is None:
+            pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="turn")
+            intent_future = pool.submit(classify_reply_llm, last_spoken, transcript_text)
+            analysis_future = pool.submit(run_answer_analysis, **analysis_kwargs)
+            intent = intent_future.result()
+        elif intent.intent == INTENT_ANSWER:
+            analysis_future = None            # computed below, nothing to overlap with
         logger.info(
             "Session %s question order=%d: reply intent=%s (source=%s)",
             self.session.id, question.order, intent.intent, intent.source,
         )
 
-        if intent.intent == INTENT_ABUSIVE:
-            return self.terminate_for_abuse(question, transcript_text, intent)
+        try:
+            if intent.intent == INTENT_ABUSIVE:
+                return self.terminate_for_abuse(question, transcript_text, intent)
 
-        if intent.intent in (INTENT_REPEAT, INTENT_CLARIFICATION, INTENT_CANDIDATE_QUESTION, INTENT_OFF_TOPIC):
-            turn = self._reply_and_reask_turn(question, transcript_text, intent)
-            if turn is not None:
-                return turn
-            # Limit reached for this question: treat the reply as the answer.
+            if intent.intent in _QUERY_INTENTS:
+                turn = self._reply_and_reask_turn(question, transcript_text, intent)
+                if turn is not None:
+                    return turn
+                # Limit reached for this question: treat the reply as the answer.
 
-        is_first_answer_to_question = not question.has_answer
+            if analysis_future is not None:
+                analysis = analysis_future.result()
+            else:
+                analysis = run_answer_analysis(**analysis_kwargs)
+        finally:
+            if pool is not None:
+                pool.shutdown(wait=False)     # an unused speculative analysis just finishes in the background
 
-        answer = analyze_answer(
-            question=question,
-            transcript_text=transcript_text,
-            candidate_profile=self.candidate_profile,
-            audio_ref=audio_ref,
-        )
+        answer = save_answer(question, full_transcript, analysis, audio_ref=audio_ref)
 
         if is_first_answer_to_question:
             self.session.questions_asked_count += 1
@@ -255,6 +326,64 @@ class InterviewFSM:
         return turn
 
     # ------------------------------------------------------------------
+    # Reconnect: re-send whatever the candidate should be hearing right now
+    # ------------------------------------------------------------------
+
+    def resume_turn(self) -> dict:
+        """
+        Called when the candidate's socket (re)joins an IN_PROGRESS session.
+        Re-speaks the question / follow-up that is currently open so the
+        interview continues instead of dead-ending after a network drop.
+        """
+        last_asked = (
+            self.session.questions.filter(asked_at__isnull=False).order_by("-order").first()
+        )
+        if last_asked is None:
+            return {"action": TurnAction.SPEAK_COMPANY_INTRO, "text": COMPANY_INTRO_TEXT}
+
+        if last_asked.has_answer:
+            answer = last_asked.answer
+            follow_up_count = last_asked.generation_context.get("follow_up_count", 0)
+            if not (
+                answer.analysis_json.get("should_follow_up")
+                and follow_up_count < MAX_FOLLOW_UPS_PER_QUESTION
+            ):
+                return self._advance_to_next_question_or_close()
+
+        return {
+            "action": TurnAction.SPEAK_FOLLOW_UP,
+            "question_id": str(last_asked.id),
+            "text": f"Sorry, the connection dropped for a moment. {self._last_spoken_text(last_asked)}",
+        }
+
+    def no_speech_turn(self, question_id) -> dict | None:
+        """
+        The browser heard the candidate talking but Whisper returned nothing
+        (noise, a very quiet voice, a cough). Ask once more instead of scoring
+        silence as the answer. Returns None when the per-question limit of
+        such re-asks is used up (the caller then continues normally).
+        """
+        question = self._get_question(question_id)
+        if question is None:
+            return None
+        intent = TurnIntent(INTENT_UNCLEAR, reply="Sorry, I didn't catch that.", source="empty")
+        return self._reply_and_reask_turn(question, "", intent)
+
+    def repeat_turn(self, question_id) -> dict:
+        """
+        Re-speaks the open question without scoring anything. Used when an
+        interruption turned out to contain no speech (cough, background noise).
+        """
+        question = self._get_question(question_id)
+        if question is None:
+            return {"action": TurnAction.ERROR, "message": "Unrecognized question — please rejoin the interview."}
+        return {
+            "action": TurnAction.SPEAK_FOLLOW_UP,
+            "question_id": str(question.id),
+            "text": self._last_spoken_text(question),
+        }
+
+    # ------------------------------------------------------------------
     # Candidate asked to repeat / clarify / asked their own question
     # ------------------------------------------------------------------
 
@@ -267,11 +396,35 @@ class InterviewFSM:
         for the recruiter. Returns None once the per-question limit is hit.
         """
         queries = question.generation_context.setdefault("candidate_queries", [])
-        if len(queries) >= MAX_CANDIDATE_QUERIES_PER_QUESTION:
+
+        # "Repeat" and "couldn't hear you" are not the candidate stalling, so they
+        # do not use up the 3 real questions (a hard total cap still applies).
+        real_queries = [q for q in queries if q.get("intent") not in (INTENT_REPEAT, INTENT_UNCLEAR)]
+        is_soft = intent.intent in (INTENT_REPEAT, INTENT_UNCLEAR)
+        over_limit = (
+            len(queries) >= MAX_CANDIDATE_QUERIES_TOTAL
+            or (not is_soft and len(real_queries) >= MAX_CANDIDATE_QUERIES_PER_QUESTION)
+        )
+        if over_limit:
+            if not question.generation_context.get("queries_closed"):
+                # First time over the limit: say so politely and ask for the
+                # answer. The reply after this one IS taken as the answer —
+                # a question is never scored as an answer.
+                question.generation_context["queries_closed"] = True
+                question.save(update_fields=["generation_context"])
+                logger.info(
+                    "Session %s question order=%d: candidate query limit reached — asking for the answer.",
+                    self.session.id, question.order,
+                )
+                return {
+                    "action": TurnAction.SPEAK_FOLLOW_UP,
+                    "question_id": str(question.id),
+                    "text": f"{QUERY_LIMIT_REPLY} {self._last_spoken_text(question)}",
+                }
             logger.info(
-                "Session %s question order=%d: candidate query limit (%d) reached — "
+                "Session %s question order=%d: candidate query limit already used — "
                 "treating reply as the answer.",
-                self.session.id, question.order, MAX_CANDIDATE_QUERIES_PER_QUESTION,
+                self.session.id, question.order,
             )
             return None
 
@@ -288,6 +441,8 @@ class InterviewFSM:
 
         if intent.intent == INTENT_REPEAT:
             text = f"{reply or 'Of course.'} {last_text}"
+        elif intent.intent == INTENT_UNCLEAR:
+            text = f"{reply or UNCLEAR_REPLY} Could you please answer again? {last_text}"
         elif intent.intent == INTENT_OFF_TOPIC:
             text = f"{reply or OFF_TOPIC_REPLY} Let's continue — {last_text}"
         elif intent.intent == INTENT_CLARIFICATION:
@@ -522,6 +677,7 @@ class InterviewFSM:
         question.asked_at = timezone.now()
         question.generation_context["last_spoken_text"] = text
         question.save(update_fields=["asked_at", "generation_context"])
+        self._prefetch_variants(text)
 
         return {
             "action": TurnAction.SPEAK_INTRO if is_intro else TurnAction.SPEAK_QUESTION,
@@ -553,7 +709,12 @@ class InterviewFSM:
         first_name = self._get_first_name()
         if not first_name:
             return text
-        return f"{first_name}, {text[0].lower()}{text[1:]}" if text else text
+        if not text:
+            return text
+        first_word = text.split()[0].strip(",.:;!?").lower()
+        if first_word in _LOWERCASE_STARTERS:
+            text = text[0].lower() + text[1:]
+        return f"{first_name}, {text}"
 
     def _get_first_name(self) -> str:
         full_name = self.candidate_profile.get("name", "").strip()
@@ -583,7 +744,8 @@ class InterviewFSM:
         )
 
         from apps.interviews.tasks import generate_final_rating
-        generate_final_rating.delay(str(self.session.id))
+        session_id = str(self.session.id)
+        transaction.on_commit(lambda: generate_final_rating.delay(session_id))
 
         default_message = (
             "That's the end of the interview. Thank you for your time "
@@ -632,7 +794,14 @@ class InterviewFSM:
     # ------------------------------------------------------------------
 
     def _get_question(self, question_id) -> Question | None:
-        return self.session.questions.filter(id=question_id).first()
+        try:
+            question_id = uuid.UUID(str(question_id))
+        except (ValueError, AttributeError, TypeError):
+            return None
+        try:
+            return self.session.questions.filter(id=question_id).first()
+        except ValidationError:
+            return None
 
     def _get_question_by_order(self, order: int) -> Question | None:
         return self.session.questions.filter(order=order).first()

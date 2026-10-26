@@ -23,6 +23,12 @@
  * to receive a live-generated avatar stream. Right now it's local-only.
  */
 
+// Phones get a lighter camera stream (less CPU for face tracking, less heat,
+// longer battery); desktops keep 640x480.
+const IS_MOBILE_DEVICE =
+  /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+  (navigator.maxTouchPoints > 1 && Math.min(window.screen.width, window.screen.height) < 900);
+
 class WebRTCClient {
   constructor() {
     this.localStream = null;
@@ -38,8 +44,13 @@ class WebRTCClient {
 
     try {
       this.localStream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: "user" },
-        audio: true,
+        video: IS_MOBILE_DEVICE
+          ? { width: { ideal: 480 }, height: { ideal: 360 }, frameRate: { ideal: 15, max: 20 }, facingMode: "user" }
+          : { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 }, facingMode: "user" },
+        // Echo cancellation is what lets the candidate interrupt the
+        // interviewer without the interviewer's own voice (from the speakers)
+        // being mistaken for the candidate talking.
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
       });
     } catch (err) {
       console.error("[WebRTCClient] camera/mic permission denied or unavailable:", err);
@@ -94,3 +105,4 @@ class WebRTCClient {
 }
 
 window.WebRTCClient = WebRTCClient;
+window.IS_MOBILE_DEVICE = IS_MOBILE_DEVICE;

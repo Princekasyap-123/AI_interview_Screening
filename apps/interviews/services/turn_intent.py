@@ -50,8 +50,23 @@ INTENT_REPEAT = "repeat"
 INTENT_CLARIFICATION = "clarification"
 INTENT_CANDIDATE_QUESTION = "candidate_question"
 INTENT_OFF_TOPIC = "off_topic"
+INTENT_UNCLEAR = "unclear"      # background noise / someone else talking / not addressed to the interviewer
 INTENT_ABUSIVE = "abusive"
-_VALID = {INTENT_ANSWER, INTENT_REPEAT, INTENT_CLARIFICATION, INTENT_CANDIDATE_QUESTION, INTENT_ABUSIVE}
+_VALID = {
+    INTENT_ANSWER, INTENT_REPEAT, INTENT_CLARIFICATION, INTENT_CANDIDATE_QUESTION,
+    INTENT_OFF_TOPIC, INTENT_UNCLEAR, INTENT_ABUSIVE,
+}
+
+# Obvious "please repeat" requests are answered without any LLM call at all.
+_REPEAT_FAST_RE = re.compile(
+    r"^\W*(?:sorry\W+|excuse me\W+|please\W+|ji\W+)*"
+    r"(?:(?:can|could|would) you (?:please )?(?:repeat|say)(?: that| it| the question)?(?: again| once more)?(?: please)?"
+    r"|repeat(?: that| it| the question)?(?: again| once more)?(?: please)?"
+    r"|say (?:that|it) again(?: please)?"
+    r"|pardon(?: me)?|come again|one more time(?: please)?"
+    r"|(?:phir se|dobara|ek baar aur) (?:boliye|bataiye|bolo|batao)(?: please)?)\W*$",
+    re.IGNORECASE,
+)
 
 # Replies longer than this, without "?" or Devanagari, are treated as
 # answers without an LLM call.
@@ -68,9 +83,51 @@ REPEAT_REPLY = "Of course."
 OFF_TOPIC_REPLY = (
     "I'm the AI interviewer for White Force, and I'm only able to help with this interview."
 )
+UNCLEAR_REPLY = (
+    "Sorry, I couldn't hear that clearly — there seemed to be some background noise."
+)
 CANDIDATE_QUESTION_FALLBACK = (
     "That's a fair question. The recruiting team will share those details with you after this interview."
 )
+ABOUT_AI_REPLY = "I'm the AI interviewer from White Force, and I'll be the one asking the questions today."
+COMPANY_REPLY = "This interview is being conducted by White Force."
+
+# Short questions ABOUT THE INTERVIEWER ("tell me about yourself", "who are you")
+# and "which company is this" are answered with fixed text: no LLM call, so
+# no latency and — more important — no chance of the model mixing up who is
+# the interviewer and who is the candidate.
+_ABOUT_AI_RE = re.compile(
+    r"\b(?:tell me (?:something |more )?about yourself|who are you|what are you"
+    r"|are you (?:a |an )?(?:real|human|person|robot|bot|ai|machine))\b",
+    re.IGNORECASE,
+)
+_COMPANY_RE = re.compile(
+    r"\b(?:which|what) (?:company|organi[sz]ation)\b|\bcompany(?:'s)? name\b"
+    r"|\bname of (?:the|your|this) (?:company|organi[sz]ation)\b|\bwho (?:do you|are you) work(?:ing)? for\b",
+    re.IGNORECASE,
+)
+_SHORT_QUERY_MAX_WORDS = 14
+
+
+def sanitize_reply(reply: str, question_text: str) -> str:
+    """
+    Guards the LLM-written reply against role confusion. A reply that asks
+    the candidate something (contains "?") or just echoes the interview
+    question is thrown away ("" -> the caller uses its fixed fallback).
+    """
+    reply = (reply or "").strip()
+    if not reply or "?" in reply:
+        return ""
+    from difflib import SequenceMatcher
+    r_words = re.findall(r"[a-z0-9']+", reply.lower())
+    q_words = re.findall(r"[a-z0-9']+", (question_text or "").lower())
+    if len(r_words) >= 6 and q_words:
+        match = SequenceMatcher(None, r_words, q_words, autojunk=False).find_longest_match(
+            0, len(r_words), 0, len(q_words)
+        )
+        if match.size >= 6:
+            return ""
+    return reply
 
 
 class TurnIntent:
@@ -157,7 +214,12 @@ def _stream_reply(system_prompt: str, user_prompt: str) -> str:
     return " ".join(finalized).strip()
 
 
-def classify_reply(question_text: str, transcript_text: str) -> TurnIntent:
+def classify_fast(transcript_text: str) -> "TurnIntent | None":
+    """
+    The part of the intent check that needs NO LLM: empty reply, abusive
+    keywords, an obvious "please repeat", or a long reply that is clearly an
+    answer. Returns None when an LLM check is needed (classify_reply_llm).
+    """
     text = (transcript_text or "").strip()
     if not text:
         return TurnIntent()
@@ -166,7 +228,29 @@ def classify_reply(question_text: str, transcript_text: str) -> TurnIntent:
     if terms:
         return TurnIntent(INTENT_ABUSIVE, evidence=", ".join(terms), source="keywords")
 
+    if len(text.split()) <= 12 and _REPEAT_FAST_RE.match(text):
+        return TurnIntent(INTENT_REPEAT, reply=REPEAT_REPLY, source="keywords")
+
+    if len(text.split()) <= _SHORT_QUERY_MAX_WORDS:
+        if _ABOUT_AI_RE.search(text):
+            return TurnIntent(INTENT_CANDIDATE_QUESTION, reply=ABOUT_AI_REPLY, source="keywords")
+        if _COMPANY_RE.search(text):
+            return TurnIntent(INTENT_CANDIDATE_QUESTION, reply=COMPANY_REPLY, source="keywords")
+
     if not _needs_llm_check(text):
+        return TurnIntent()
+    return None
+
+
+def classify_reply(question_text: str, transcript_text: str) -> TurnIntent:
+    fast = classify_fast(transcript_text)
+    return fast if fast is not None else classify_reply_llm(question_text, transcript_text)
+
+
+def classify_reply_llm(question_text: str, transcript_text: str) -> TurnIntent:
+    """The LLM intent check (plus streamed reply text when one is needed). Never raises."""
+    text = (transcript_text or "").strip()
+    if not text:
         return TurnIntent()
 
     try:
@@ -178,7 +262,7 @@ def classify_reply(question_text: str, transcript_text: str) -> TurnIntent:
             max_tokens=512,
             reasoning_effort="low",
         )
-    except (RuntimeError, ValueError) as exc:
+    except Exception as exc:    # never let an intent-check problem stop the interview
         logger.warning("Turn intent check failed, treating reply as an answer: %s", exc)
         return TurnIntent()
 
@@ -197,22 +281,31 @@ def classify_reply(question_text: str, transcript_text: str) -> TurnIntent:
     if intent == INTENT_REPEAT:
         return TurnIntent(INTENT_REPEAT, reply=REPEAT_REPLY, source="llm")
 
+    if intent == INTENT_UNCLEAR:
+        return TurnIntent(INTENT_UNCLEAR, reply=UNCLEAR_REPLY, source="llm")
+
     if intent == INTENT_OFF_TOPIC:
         # Fixed, formal brush-off — no LLM text call, no cold TTS (pre-warmed
         # alongside REPEAT_REPLY in interview_state._prefetch_speech()).
         return TurnIntent(INTENT_OFF_TOPIC, reply=OFF_TOPIC_REPLY, source="llm")
 
     if intent == INTENT_CLARIFICATION:
-        reply = _stream_reply(
-            TURN_REPLY_SYSTEM_PROMPT,
-            build_reply_user_prompt(question_text, text, "clarification"),
+        reply = sanitize_reply(
+            _stream_reply(
+                TURN_REPLY_SYSTEM_PROMPT,
+                build_reply_user_prompt(question_text, text, "clarification"),
+            ),
+            question_text,
         )
         return TurnIntent(INTENT_CLARIFICATION, reply=reply, source="llm")
 
     if intent == INTENT_CANDIDATE_QUESTION:
-        reply = _stream_reply(
-            TURN_REPLY_SYSTEM_PROMPT,
-            build_reply_user_prompt(question_text, text, "candidate_question"),
+        reply = sanitize_reply(
+            _stream_reply(
+                TURN_REPLY_SYSTEM_PROMPT,
+                build_reply_user_prompt(question_text, text, "candidate_question"),
+            ),
+            question_text,
         ) or CANDIDATE_QUESTION_FALLBACK
         return TurnIntent(INTENT_CANDIDATE_QUESTION, reply=reply, source="llm")
 
@@ -221,8 +314,11 @@ def classify_reply(question_text: str, transcript_text: str) -> TurnIntent:
     if not has_aside:
         return TurnIntent(INTENT_ANSWER, source="llm")
 
-    aside_reply = _stream_reply(
-        TURN_REPLY_SYSTEM_PROMPT,
-        build_reply_user_prompt(question_text, text, "candidate_question"),
+    aside_reply = sanitize_reply(
+        _stream_reply(
+            TURN_REPLY_SYSTEM_PROMPT,
+            build_reply_user_prompt(question_text, text, "candidate_question"),
+        ),
+        question_text,
     ) or CANDIDATE_QUESTION_FALLBACK
     return TurnIntent(INTENT_ANSWER, aside_reply=aside_reply, source="llm")

@@ -55,7 +55,7 @@ def prefetch_in_background(texts: list[str]) -> None:
         for text in texts:
             for chunk in split_chunks(text):
                 try:
-                    tts_engine.synthesize(chunk)
+                    tts_engine.synthesize(chunk, background=True)
                     done += 1
                 except Exception as exc:                 # never break the interview
                     logger.warning("TTS prefetch failed for %r: %s", chunk[:60], exc)

@@ -26,9 +26,10 @@ DEBUG = os.environ.get("DJANGO_DEBUG", "False") == "True"
 # Sahi
 ALLOWED_HOSTS = [
     h.strip()
-    for h in os.environ.get(
-        "ALLOWED_HOSTS",
-        "localhost,127.0.0.1,.ngrok-free.dev",
+    for h in (
+        os.environ.get("DJANGO_ALLOWED_HOSTS")
+        or os.environ.get("ALLOWED_HOSTS")
+        or "localhost,127.0.0.1,.ngrok-free.dev"
     ).split(",")
     if h.strip()
 ]
@@ -208,6 +209,13 @@ CORS_ALLOW_CREDENTIALS = True
 # AI engine — Groq
 # ---------------------------------------------------------------------
 
+# Speech-to-text language. "en" = English only; set STT_LANGUAGE= (empty) in .env
+# to let Whisper auto-detect, which is better for Hindi / Hinglish candidates.
+STT_LANGUAGE = os.environ.get("STT_LANGUAGE", "en")
+# Optional: override the model used to score each answer (default: LLMClient.REASONING_MODEL).
+ANSWER_ANALYSIS_MODEL = os.environ.get("ANSWER_ANALYSIS_MODEL") or None
+MAX_FOLLOW_UPS_PER_QUESTION = int(os.environ.get("MAX_FOLLOW_UPS_PER_QUESTION", "1"))
+
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 if not GROQ_API_KEY and not DEBUG:
     raise RuntimeError("GROQ_API_KEY is not set in .env")
@@ -269,10 +277,12 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
 ]
 
 
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-    "https://*.ngrok-free.dev",
+CSRF_TRUSTED_ORIGINS += [
+    o for o in (
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "https://*.ngrok-free.dev",
+    ) if o not in CSRF_TRUSTED_ORIGINS
 ]
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")

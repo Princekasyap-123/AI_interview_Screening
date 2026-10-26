@@ -14,6 +14,7 @@ capped per request (the frontend sends one sentence at a time).
 import json
 import logging
 
+from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -23,6 +24,20 @@ from apps.avatar.services.tts_engine import MAX_TEXT_CHARS, TTSUnavailableError,
 from apps.interviews.models import InterviewSession
 
 logger = logging.getLogger(__name__)
+
+
+TTS_MAX_REQUESTS_PER_MINUTE = 240      # one interview needs a few dozen; this only stops abuse
+
+
+def _rate_limited(session_id) -> bool:
+    """True when this session has used up its TTS requests for the current minute."""
+    key = f"tts-rate:{session_id}"
+    cache.add(key, 0, timeout=60)
+    try:
+        return cache.incr(key) > TTS_MAX_REQUESTS_PER_MINUTE
+    except ValueError:                  # key expired between add() and incr()
+        cache.set(key, 1, timeout=60)
+        return False
 
 
 def _session_exists(session_id) -> bool:
@@ -49,6 +64,8 @@ def tts_view(request):
         return JsonResponse({"error": f"text longer than {MAX_TEXT_CHARS} characters"}, status=400)
     if not _session_exists(payload.get("session_id")):
         return JsonResponse({"error": "unknown interview session"}, status=403)
+    if _rate_limited(payload.get("session_id")):
+        return JsonResponse({"error": "too many requests"}, status=429)
 
     try:
         audio = tts_engine.synthesize(text)
