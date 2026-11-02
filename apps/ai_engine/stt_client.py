@@ -7,6 +7,7 @@ from django.conf import settings
 from groq import Groq
 
 from apps.interviews.services.speech_cleanup import collapse_repeats
+from apps.interviews.services.stt_vocab import prompt_echo
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,14 @@ class STTClient:
     fails when the key is missing).
     """
 
+    # The full model hears accented speech and technical words noticeably better than turbo
+    # ("Django" vs "Jango", "B.Tech CSE" vs "BTEC CIC") and low scores were traced to
+    # transcription errors. Turbo is kept as the fallback if the full model fails or is
+    # rate-limited. Set STT_MODEL=whisper-large-v3-turbo in .env to prefer speed.
     MODEL = "whisper-large-v3"
+    MODEL_FALLBACK = "whisper-large-v3-turbo"
+    # Hindi / auto-detected speech uses the full model too.
+    MODEL_MULTILINGUAL = "whisper-large-v3"
 
     def __init__(self):
         self._client = None
@@ -54,13 +62,24 @@ class STTClient:
         language: str | None = None,
         prompt: str = "",
     ) -> str:
-        """
-        Transcribes an audio file on disk and returns plain text ("" when
-        the audio holds no real speech).
+        """Plain-text transcription (see transcribe_detailed)."""
+        return self.transcribe_detailed(audio_file_path, language, prompt)[0]
 
-        language: ISO 639-1 code. Defaults to settings.STT_LANGUAGE ("en"
-            unless changed). Set STT_LANGUAGE="" in settings/.env to let
-            Whisper auto-detect (better for Hindi / Hinglish candidates).
+    def transcribe_detailed(
+        self,
+        audio_file_path: str,
+        language: str | None = None,
+        prompt: str = "",
+    ) -> tuple[str, str]:
+        """
+        Returns (text, spoken_language). spoken_language is Whisper's own
+        detection as a lower-case name ("english", "hindi", ...) or "" when
+        unknown — it is only meaningful when language="" (auto-detect).
+
+        language: ISO 639-1 code ("en", "hi"). None = settings.STT_LANGUAGE;
+            "" = let Whisper detect the language (English + Hindi interviews).
+            STT_LANGUAGE="" in settings/.env makes auto-detect the default.
+        The text is "" when the audio holds no real speech.
         prompt: optional Whisper priming text (names, jargon).
 
         Segments that Whisper itself marks as "probably not speech"
@@ -75,7 +94,8 @@ class STTClient:
             language = getattr(settings, "STT_LANGUAGE", "en")
 
         kwargs = dict(
-            model=self.MODEL,
+            model=getattr(settings, "STT_MODEL", None)
+            or (self.MODEL if language == "en" else self.MODEL_MULTILINGUAL),
             prompt=prompt or None,
             response_format="verbose_json",
             temperature=0.0,
@@ -87,19 +107,24 @@ class STTClient:
             with open(audio_file_path, "rb") as audio_file:
                 audio_bytes = audio_file.read()
 
-            text, looped = collapse_repeats(self._clean(
-                self.client.audio.transcriptions.create(file=(audio_file_path, audio_bytes), **kwargs)
-            ))
+            raw = self._create(audio_file_path, audio_bytes, kwargs)
+            spoken = self._spoken_language(raw)
+            text, looped = collapse_repeats(self._clean(raw))
+            if text and prompt and prompt_echo(text, prompt):
+                logger.info("STT returned the priming hint itself (%r) - treating it as silence.", text[:60])
+                text = ""
+            if not text:
+                self._log_dropped(raw, len(audio_bytes))
             if looped:
                 # Whisper got stuck repeating itself (quiet / noisy audio). One more
                 # try with a little randomness usually breaks the loop.
                 logger.info("STT loop detected (%r) — transcribing once more.", text[:60])
                 kwargs["temperature"] = 0.3
                 retry, still_looped = collapse_repeats(self._clean(
-                    self.client.audio.transcriptions.create(file=(audio_file_path, audio_bytes), **kwargs)
+                    self._create(audio_file_path, audio_bytes, kwargs)
                 ))
                 text = "" if still_looped and len(retry.split()) <= 4 else (retry or text)
-            return text
+            return text, spoken
 
         except FileNotFoundError as exc:
             logger.error("Audio file not found: %s", audio_file_path)
@@ -107,6 +132,34 @@ class STTClient:
         except Exception as exc:
             logger.error("Groq STT call failed: %s", exc, exc_info=True)
             raise RuntimeError(f"STT call failed: {exc}") from exc
+
+    def _create(self, path: str, audio_bytes: bytes, kwargs: dict):
+        """One Whisper call; if the chosen model fails (quota, outage) the other one is tried once."""
+        try:
+            return self.client.audio.transcriptions.create(file=(path, audio_bytes), **kwargs)
+        except Exception as exc:
+            other = self.MODEL_FALLBACK if kwargs["model"] != self.MODEL_FALLBACK else self.MODEL
+            logger.warning("STT model %s failed (%s) - trying %s.", kwargs["model"], str(exc)[:120], other)
+            return self.client.audio.transcriptions.create(file=(path, audio_bytes), **dict(kwargs, model=other))
+
+    @staticmethod
+    def _spoken_language(response) -> str:
+        lang = response.get("language") if isinstance(response, dict) else getattr(response, "language", "")
+        return str(lang or "").strip().lower()
+
+    @staticmethod
+    def _log_dropped(response, n_bytes: int) -> None:
+        """An empty result: log WHY (audio size, Whisper's raw text and per-segment confidence),
+        so 'it did not hear me' can be told apart from 'the audio was silent'."""
+        raw_text = response if isinstance(response, str) else (getattr(response, "text", "") or "")
+        segs = [] if isinstance(response, str) else (getattr(response, "segments", None) or [])
+        info = []
+        for seg in segs[:6]:
+            get = seg.get if isinstance(seg, dict) else (lambda k, d=None, _s=seg: getattr(_s, k, d))
+            info.append(f"no_speech={get('no_speech_prob', 0):.2f} logprob={get('avg_logprob', 0):.2f} "
+                        f"comp={get('compression_ratio', 0):.2f} text={str(get('text', ''))[:40]!r}")
+        logger.info("STT returned nothing usable (audio=%d bytes, whisper_text=%r, segments=%s)",
+                    n_bytes, raw_text[:80], info)
 
     @staticmethod
     def _clean(response) -> str:

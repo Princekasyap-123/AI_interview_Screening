@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
+<title>Interview over · White Force</title>
+<style>
+  :root { --bg:#f4f6fb; --card:#fff; --text:#1c2333; --muted:#5d667a; --accent:#2f6fed; --ring:#e3e8f2; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0e1320; --card:#171e30; --text:#e8ecf5; --muted:#9aa4bb; --accent:#6c97ff; --ring:#26304a; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    padding: 16px; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .card {
+    width: 100%; max-width: 440px; text-align: center;
+    background: var(--card); border: 1px solid var(--ring); border-radius: 18px;
+    padding: 36px 28px; box-shadow: 0 10px 40px rgba(0,0,0,.08);
+  }
+  .tick {
+    width: 64px; height: 64px; margin: 0 auto 18px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 32px; color: #fff; background: var(--accent);
+  }
+  .brand { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  h1 { font-size: 22px; margin: 0 0 10px; }
+  p { margin: 0; line-height: 1.55; color: var(--muted); font-size: 15px; }
+</style>
+</head>
+<body>
+  <main class="card">
+    <div class="tick">&#10003;</div>
+    <div class="brand">White Force &middot; AI Interview</div>
+    {% if rescheduled_for %}
+    <h1>Your interview is rescheduled</h1>
+    <p>New time: <strong>{{ rescheduled_for }}</strong>.<br>This link is no longer active. The recruiting team will send you a new link.</p>
+    {% else %}
+    <h1>This interview is over</h1>
+    <p>Thank you for your time. This link is no longer active. We will contact you soon.</p>
+    {% endif %}
+  </main>
+</body>
+</html>

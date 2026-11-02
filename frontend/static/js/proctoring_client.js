@@ -75,7 +75,10 @@ const FACE_DETECTOR_INPUT_SIZE = 320;   // smaller = faster on CPU
 
 // ---- Generic timer-based flags ----
 const MIN_REPORTABLE_DURATION_MS = 1500;
-const MULTI_FACE_CHECKIN_MS = 5000;
+const MULTI_FACE_CHECKIN_MS = 4000;     // server needs >= 4000 ms (MIN_MULTIPLE_FACES_DURATION_MS)
+const MULTI_FACE_GAP_MS = 2000;         // a second face may drop out this long without restarting the timer
+const PERSON_MIN_SCORE = 0.5;           // object detector "person" boxes counted as a second person
+const PERSON_MIN_AREA = 0.015;          // ...if they cover at least this share of the frame
 
 // ---- Looking away (head turn + eye direction) ----
 // All limits are DEVIATIONS from the candidate's own baseline, measured
@@ -85,14 +88,19 @@ const MULTI_FACE_CHECKIN_MS = 5000;
 // camera sits above the text they read, so the same numbers would fire "looking away" constantly
 // and end the interview. Phones therefore get roomier limits.
 const _PHONE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-const LOOK_AWAY_WARN_MS = _PHONE ? 6000 : 3000;     // continuously away this long -> report
+const LOOK_AWAY_WARN_MS = _PHONE ? 5000 : 3500;     // continuously away this long -> report
+const READING_GRACE_MS = 2500;        // after the interviewer stops talking, glancing around is still fine
+const BASELINE_DRIFT = 0.03;          // how fast the on-screen reference follows a settled posture
 const LOOK_AWAY_REPEAT_MS = 10000;    // still away -> report again (matches SAME_TYPE_COOLDOWN_SECONDS)
 const LOOK_RECOVER_SAMPLES = 3;       // ~0.6 s back on screen ends an episode
-const HEAD_YAW_LIMIT = _PHONE ? 0.30 : 0.20;        // left/right turn (cheek-distance ratio, ~20-25 deg on PC)
-const HEAD_PITCH_DOWN_LIMIT = _PHONE ? 0.18 : 0.10; // head tipped down (lap / phone / desk)
-const HEAD_PITCH_UP_LIMIT = _PHONE ? 0.22 : 0.14;   // head tipped up
-const EYE_H_LIMIT = _PHONE ? 0.20 : 0.14;           // eyes to the side (iris position, 0..1 of eye width)
-const EYE_DOWN_LIMIT = _PHONE ? 0.24 : 0.16;        // eyes down (iris position, 0..1 of eye height)
+const HEAD_YAW_LIMIT = _PHONE ? 0.22 : 0.17;        // left/right turn (cheek-distance ratio, roughly 15-20 deg)
+// Sliding / leaning sideways without turning the head (face centre moves across the picture, as a
+// share of the picture width). Without this check a candidate who moves out of line is never flagged.
+const FACE_SHIFT_LIMIT = _PHONE ? 0.17 : 0.12;
+const HEAD_PITCH_DOWN_LIMIT = _PHONE ? 0.22 : 0.14; // head tipped down (lap / phone / desk)
+const HEAD_PITCH_UP_LIMIT = _PHONE ? 0.24 : 0.16;   // head tipped up
+const EYE_H_LIMIT = _PHONE ? 0.24 : 0.18;           // eyes to the side (iris position, 0..1 of eye width)
+const EYE_DOWN_LIMIT = _PHONE ? 0.28 : 0.22;        // eyes down (iris position, 0..1 of eye height)
 const HEAD_YAW_ABSOLUTE = 0.38;       // before the baseline exists: only a big turn counts
 
 // ---- Face mesh throttle (CPU saver) ----
@@ -143,6 +151,16 @@ const READING_SUSTAINED_FRACTION = 0.6; // ...or >=60% even without repeated gla
 const READING_MIN_GLANCES = 3;          // look-away episodes in the window
 const READING_DOMINANT_SHARE = 0.7;     // mostly the SAME direction (down or side)
 const READING_REPORT_COOLDOWN_MS = 60000;
+
+// ---- Mouth movement: is the candidate the one speaking? ----
+// Used with the microphone voice detector (interview_assist.js): a voice heard while the
+// candidate's own lips are still means somebody else is talking (prompting the answers).
+const MOUTH_WINDOW_MS = 900;            // lip movement is judged over the last ~1 s
+const MOUTH_FRESH_MS = 600;             // newest face sample must be this recent to be trusted
+const MOUTH_MIN_SPAN_MS = 600;          // ...and the samples must cover at least this much time
+const MOUTH_MOVE_RANGE = 0.012;         // lip-gap range (share of face height) that counts as "lips moving"
+const MOUTH_OPEN_GAP = 0.045;           // a mouth held clearly open counts as speaking too
+const BG_VOICE_REPORT_COOLDOWN_MS = 20000;
 
 // ---- Devtools heuristic ----
 const DEVTOOLS_SIZE_THRESHOLD_PX = 200;
@@ -220,6 +238,10 @@ class ProctoringClient {
     this._glanceTimes = [];
     this._prevOff = false;
     this._lastReadingReportAt = 0;
+
+    // Mouth movement / background voice
+    this._mouthSamples = [];            // [{ t, gap }] lip gap relative to face height
+    this._lastBgVoiceReportAt = 0;
 
     // Devtools
     this._devtoolsCheckInterval = null;
@@ -481,6 +503,16 @@ class ProctoringClient {
   }
 
   /**
+   * Call with true while the interviewer is speaking (the caption / question is on the
+   * screen and the candidate is reading it): looking at the text is not "looking away".
+   * A short grace period after it ends covers the glance back to the camera.
+   */
+  setScreenReading(on) {
+    this._readingScreen = !!on;
+    if (!on) this._readingGraceUntil = Date.now() + READING_GRACE_MS;
+  }
+
+  /**
    * Re-learn the "looking at the screen" head pose. Call when the
    * interview starts (the candidate is listening to the AI intro and
    * looking at the screen).
@@ -571,7 +603,28 @@ class ProctoringClient {
     this._faceMesh = null;
   }
 
+  /**
+   * Tells the server whether the browser-side checks are really running (and how many camera frames the face
+   * tracker has analysed), so a quiet proctoring report can be told apart from checks that never started.
+   */
+  reportTrackingStatus() {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+    this.socket.send(JSON.stringify({
+      type: "tracking_status",
+      status: {
+        face_tracking: !!this._faceMesh,
+        face_frames: this._faceFrames || 0,
+        baseline_learned: !!this._poseBaseline,
+        object_detection: !!this._objectLoopActive,
+        face_match: !!this._faceMatchReady,
+        phone_browser: _PHONE,
+        fullscreen: !!document.fullscreenElement,
+      },
+    }));
+  }
+
   _onFaceMeshResults(results) {
+    this._faceFrames = (this._faceFrames || 0) + 1;
     const faces = results.multiFaceLandmarks || [];
     const faceCount = faces.length;
 
@@ -588,19 +641,84 @@ class ProctoringClient {
       }
     }
 
-    if (faceCount >= 2) {
+    // A second face flickers in and out of detection (small, turned, partly hidden).
+    // The "more than one person" timer therefore only resets after a real gap,
+    // not on a single frame that happens to see one face. The object detector's
+    // person count backs the face mesh up.
+    const now = Date.now();
+    const personsRecently = now - (this._extraPersonAt || 0) < MULTI_FACE_GAP_MS;
+    if (faceCount >= 2 || personsRecently) {
+      this._multiLastSeen = now;
       this._tickOngoing("multipleFaces", "multiple_faces", MULTI_FACE_CHECKIN_MS, {
-        face_count: faceCount,
+        face_count: Math.max(faceCount, personsRecently ? this._extraPersonCount || 2 : 0),
       });
-    } else {
+    } else if (now - (this._multiLastSeen || 0) > MULTI_FACE_GAP_MS) {
       this._activeTimers.multipleFaces = null;
     }
 
     if (faceCount === 1) {
       this._samplePose(faces[0]);
+      this._sampleMouth(faces[0]);
     } else {
       this._resetLookAway();      // no face / several faces are reported separately
+      this._mouthSamples.length = 0;
     }
+  }
+
+  // ------------------------------------------------------------------
+  // Mouth movement + "another voice" report
+  // ------------------------------------------------------------------
+
+  _sampleMouth(lm) {
+    const upper = lm[13];     // inner upper lip
+    const lower = lm[14];     // inner lower lip
+    const top = lm[10];       // forehead
+    const chin = lm[152];
+    if (!upper || !lower || !top || !chin) return;
+    const faceH = Math.abs(chin.y - top.y);
+    if (faceH < 0.05) return;                         // face too small / too far to measure lips
+    const now = performance.now();
+    this._mouthSamples.push({ t: now, gap: Math.abs(lower.y - upper.y) / faceH });
+    while (this._mouthSamples.length && now - this._mouthSamples[0].t > MOUTH_WINDOW_MS) {
+      this._mouthSamples.shift();
+    }
+  }
+
+  /**
+   * State of the candidate's lips, for interview_assist.js:
+   *   reliable  — exactly one face, facing the screen, with fresh landmarks
+   *   moving    — the lips moved (or are held open) during the last ~1 s
+   * When reliable is false the caller must NOT conclude anything from it.
+   */
+  getMouthState() {
+    const now = performance.now();
+    const s = this._mouthSamples;
+    const last = s.length ? s[s.length - 1] : null;
+    const reliable =
+      !!last &&
+      now - last.t <= MOUTH_FRESH_MS &&
+      s.length >= 4 &&
+      last.t - s[0].t >= MOUTH_MIN_SPAN_MS &&   // enough history to see lips move (a face that just appeared is not judged)
+      this._awaySince === null;        // head turned away: lip landmarks are unreliable
+    if (!reliable) return { reliable: false, moving: false };
+    let min = Infinity;
+    let max = -Infinity;
+    for (const x of s) {
+      if (x.gap < min) min = x.gap;
+      if (x.gap > max) max = x.gap;
+    }
+    return { reliable: true, moving: max - min >= MOUTH_MOVE_RANGE || max >= MOUTH_OPEN_GAP };
+  }
+
+  /**
+   * A voice was heard for several seconds while the candidate's lips were still.
+   * Reported as "background_voice" (counted by the server as a violation).
+   */
+  reportBackgroundVoice(info = {}) {
+    const now = Date.now();
+    if (now - this._lastBgVoiceReportAt < BG_VOICE_REPORT_COOLDOWN_MS) return;
+    this._lastBgVoiceReportAt = now;
+    this._sendFlag("background_voice", { source: "voice_without_lip_movement", ...info });
   }
 
   // ------------------------------------------------------------------
@@ -640,6 +758,7 @@ class ProctoringClient {
     const dR = dist(nose, cheekR);
 
     const pose = {
+      cx: eyeMidX,
       pitch: (nose.y - eyeMidY) / faceH,
       yaw: (nose.x - eyeMidX) / eyeDist,
       yawR: (dL - dR) / (dL + dR),
@@ -674,7 +793,7 @@ class ProctoringClient {
    * Returns null (on screen) or a direction: "left" / "right" / "down" / "up"
    * plus the measured deviations (sent to the server for the recruiter).
    */
-  _lookDirection(pose) {
+  _lookDirection(pose, reading = false) {
     const b = this._poseBaseline;
     if (!b) {
       // No baseline yet: only an obvious head turn counts.
@@ -691,6 +810,12 @@ class ProctoringClient {
     const info = { dYaw: +dYaw.toFixed(3), dPitch: +dPitch.toFixed(3), dGx: +dGx.toFixed(3), dGy: +dGy.toFixed(3) };
 
     if (Math.abs(dYaw) > HEAD_YAW_LIMIT) return { dir: dYaw > 0 ? "right" : "left", source: "head", ...info };
+    const dCx = b.cx === undefined || b.cx === null ? 0 : pose.cx - b.cx;
+    info.dCx = +dCx.toFixed(3);
+    if (Math.abs(dCx) > FACE_SHIFT_LIMIT) return { dir: dCx > 0 ? "right" : "left", source: "position", ...info };
+    // While the interviewer is speaking the candidate reads the caption on the screen: looking DOWN a
+    // little and eye movement are normal then. Turning the head or moving away is not.
+    if (reading) return null;
     if (dPitch > HEAD_PITCH_DOWN_LIMIT) return { dir: "down", source: "head", ...info };
     if (dPitch < -HEAD_PITCH_UP_LIMIT) return { dir: "up", source: "head", ...info };
     if (eyes && Math.abs(dGx) > EYE_H_LIMIT) return { dir: dGx > 0 ? "right" : "left", source: "eyes", ...info };
@@ -722,9 +847,26 @@ class ProctoringClient {
     const pose = this._poseFromLandmarks(landmarks);
     if (!pose) return;
 
-    // Looking away runs all the time (also before the baseline exists).
-    const look = this._lookDirection(pose);
-    this._updateLookAway(now, look);
+    // Looking away runs all the time (also before the baseline exists) —
+    // except while the candidate is reading the question off the screen.
+    const reading = this._readingScreen || now < (this._readingGraceUntil || 0);
+    const look = this._lookDirection(pose, reading);
+    {
+      this._updateLookAway(now, look);
+      // Drift: a pose that is clearly on-screen slowly becomes the new reference, so a
+      // candidate who settles into a different posture / camera angle is not flagged forever.
+      if (!look && !reading && this._poseBaseline && !this._answering) {
+        const b = this._poseBaseline;
+        if (b.cx !== undefined && b.cx !== null) b.cx += (pose.cx - b.cx) * BASELINE_DRIFT;
+        b.pitch += (pose.pitch - b.pitch) * BASELINE_DRIFT;
+        b.yaw += (pose.yaw - b.yaw) * BASELINE_DRIFT;
+        b.yawR += (pose.yawR - b.yawR) * BASELINE_DRIFT;
+        if (pose.gx !== null && b.gx !== null && b.gx !== undefined) {
+          b.gx += (pose.gx - b.gx) * BASELINE_DRIFT;
+          b.gy += (pose.gy - b.gy) * BASELINE_DRIFT;
+        }
+      }
+    }
 
     if (!this._poseBaseline) {
       // Calibrate only on frames that are clearly screen-facing.
@@ -735,6 +877,7 @@ class ProctoringClient {
           pitch: median(this._poseCal.map((p) => p.pitch)),
           yaw: median(this._poseCal.map((p) => p.yaw)),
           yawR: median(this._poseCal.map((p) => p.yawR)),
+          cx: median(this._poseCal.map((p) => p.cx)),
           gx: eyeCal.length ? median(eyeCal.map((p) => p.gx)) : null,
           gy: eyeCal.length ? median(eyeCal.map((p) => p.gy)) : null,
         };
@@ -874,6 +1017,20 @@ class ProctoringClient {
     const frameArea = video.videoWidth * video.videoHeight;
     const best = { phone: 0, notes: 0 };
     const bestLabel = { phone: "", notes: "" };
+
+    // Two or more people in the picture -> same "multiple faces" rule as the face mesh.
+    const people = predictions.filter(
+      (p) => p.class === "person" && p.score >= PERSON_MIN_SCORE &&
+        (p.bbox[2] * p.bbox[3]) / frameArea >= PERSON_MIN_AREA
+    ).length;
+    this._personHistory = this._personHistory || [];
+    this._personHistory.push(people);
+    if (this._personHistory.length > 3) this._personHistory.shift();
+    if (this._personHistory.filter((n) => n >= 2).length >= 2) {
+      this._extraPersonAt = Date.now();
+      this._extraPersonCount = Math.max(...this._personHistory);
+    }
+
     for (const p of predictions) {
       const rule = OBJECT_RULES[p.class];
       if (!rule || p.score < rule.minScore) continue;

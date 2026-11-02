@@ -90,11 +90,33 @@ class ProctoringConsumer(AsyncJsonWebsocketConsumer):
             await self._handle_flag(content)
         elif msg_type == "reference_photo":
             await self._handle_reference_photo(content)
+        elif msg_type == "tracking_status":
+            await self._handle_tracking_status(content)
         else:
             await self.send_json({
                 "type": "error",
                 "message": f"Unrecognized message type: {msg_type}",
             })
+
+    # ------------------------------------------------------------------
+    # Client self-report: were the browser-side checks actually running?
+    # ------------------------------------------------------------------
+
+    async def _handle_tracking_status(self, content):
+        status = content.get("status")
+        if not isinstance(status, dict):
+            return
+        clean = {str(k)[:40]: v for k, v in list(status.items())[:20]
+                 if isinstance(v, (bool, int, float, str)) and len(str(v)) <= 80}
+        try:
+            await database_sync_to_async(self._save_tracking_status)(clean)
+        except Exception as exc:                  # diagnostics only - never disturb the interview
+            logger.warning("Could not store tracking status for %s: %s", self.session_id, exc)
+
+    def _save_tracking_status(self, clean: dict) -> None:
+        from django.utils import timezone as _tz
+        clean["reported_at"] = _tz.now().isoformat(timespec="seconds")
+        ProctoringSession.objects.filter(interview_session_id=self.session_id).update(tracking_status=clean)
 
     # ------------------------------------------------------------------
     # Flag handling

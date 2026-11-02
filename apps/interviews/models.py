@@ -25,6 +25,7 @@ class InterviewSession(models.Model):
         CANDIDATE_ENDED = "candidate_ended", "Candidate ended interview early"
         TECHNICAL_ERROR = "technical_error", "Technical error"
         ABUSIVE_LANGUAGE = "abusive_language", "Abusive or offensive language"
+        RESCHEDULED = "rescheduled", "Candidate asked to reschedule"
 
     class JobRoleType(models.TextChoices):
         BLUE_COLLAR = "blue_collar", "Blue-collar"
@@ -46,6 +47,19 @@ class InterviewSession(models.Model):
         default=JobRoleType.WHITE_COLLAR,
     )
 
+    class LanguageMode(models.TextChoices):
+        ENGLISH = "en", "English"
+        HINDI = "hi", "Hindi"
+        BOTH = "both", "English + Hindi"
+
+    # Which language(s) the interview may be held in. "both" starts in English and
+    # the interviewer switches to Hindi when the candidate speaks Hindi.
+    language_mode = models.CharField(
+        max_length=4, choices=LanguageMode.choices, default=LanguageMode.ENGLISH
+    )
+    # The language the interviewer is speaking right now ("en" / "hi").
+    current_language = models.CharField(max_length=2, default="en")
+
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.PENDING
     )
@@ -60,6 +74,8 @@ class InterviewSession(models.Model):
     )
 
     termination_note = models.TextField(blank=True)
+    # Set when the candidate was not ready and agreed a new slot (see services/scheduling.py).
+    rescheduled_for = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
@@ -208,3 +224,32 @@ class FinalRating(models.Model):
 
     def __str__(self):
         return f"Rating for {self.session_id}: {self.overall_score}"
+
+
+class ConversationTurn(models.Model):
+    """
+    One line of the interview, in order: something the interviewer said or something the
+    candidate said. Kept so the recruiter sees the WHOLE conversation - in the language it
+    was actually held in (English, Hindi or both) - not only the scored answers.
+    """
+
+    class Speaker(models.TextChoices):
+        INTERVIEWER = "interviewer", "Interviewer"
+        CANDIDATE = "candidate", "Candidate"
+
+    session = models.ForeignKey(InterviewSession, on_delete=models.CASCADE, related_name="conversation")
+    speaker = models.CharField(max_length=12, choices=Speaker.choices)
+    # question / follow_up / reply / intro / closing  (interviewer)   answer / inaudible  (candidate)
+    kind = models.CharField(max_length=20, blank=True)
+    text = models.TextField(blank=True)             # exactly what was said / heard, in `language`
+    text_en = models.TextField(blank=True)          # the English original of an interviewer line spoken in Hindi
+    language = models.CharField(max_length=8, default="en")
+    question = models.ForeignKey(Question, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        indexes = [models.Index(fields=["session", "created_at"])]
+
+    def __str__(self):
+        return f"{self.speaker}: {self.text[:40]}"

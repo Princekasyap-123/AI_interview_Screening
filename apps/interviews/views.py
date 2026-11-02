@@ -13,6 +13,8 @@ from django.views import View
 
 from apps.candidates.models import Candidate
 from apps.interviews.models import Answer, FinalRating, InterviewSession, Question
+from apps.interviews.services import scheduling
+from apps.interviews.services.language import initial_language
 from apps.interviews.serializers import (
     InterviewSessionCreateSerializer,
     InterviewSessionDetailSerializer,
@@ -37,10 +39,28 @@ class InterviewRoomView(View):
         session = get_object_or_404(
             InterviewSession, id=session_id, access_token=access_token
         )
+        # The link works for one interview only: once it has finished (or been
+        # ended for violations) a refresh shows a static page instead of the room.
+        if session.status in (
+            InterviewSession.Status.COMPLETED,
+            InterviewSession.Status.TERMINATED,
+        ):
+            slot = session.rescheduled_for
+            return render(
+                request,
+                "interview_ended.html",
+                {"rescheduled_for": scheduling.format_slot(slot) if slot else ""},
+                status=410,
+            )
         return render(
             request,
             "interview_room.html",
-            {"session_id": str(session.id), "access_token": session.access_token},
+            {
+                "session_id": str(session.id),
+                "access_token": session.access_token,
+                "language_mode": session.language_mode,
+                "current_language": session.current_language,
+            },
         )
 
 
@@ -75,6 +95,9 @@ class InterviewSessionCreateView(APIView):
                 {"detail": "Candidate not found."}, status=status.HTTP_404_NOT_FOUND
             )
 
+        language_mode = serializer.validated_data.get(
+            "language_mode", InterviewSession.LanguageMode.ENGLISH
+        )
         session = InterviewSession.objects.create(
             candidate=candidate,
             job_description_text=serializer.validated_data.get("job_description_text", ""),
@@ -84,6 +107,8 @@ class InterviewSessionCreateView(APIView):
             max_questions=serializer.validated_data.get(
                 "max_questions", settings.INTERVIEW_DEFAULT_MAX_QUESTIONS
             ),
+            language_mode=language_mode,
+            current_language=initial_language(language_mode),
         )
 
         logger.info(

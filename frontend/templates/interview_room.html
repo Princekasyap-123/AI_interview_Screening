@@ -4,6 +4,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="{% static 'img/favicon.svg' %}">
 <title>Interview Room — White Force</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
@@ -739,6 +740,117 @@
     .ai-panel .ai-mark { width: 96px; height: 96px; font-size: 34px; margin-top: -90px; }
     .btn-end { min-width: 0; width: 100%; }
   }
+
+  /* =================================================================
+     Cross-device hardening (phone / tablet / desktop). CSS only — no
+     id, class or script changes. Each rule below overrides an earlier
+     one; browsers without dvh / safe-area support just keep the older
+     declaration above.
+     ================================================================= */
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  img, video { max-width: 100%; }
+
+  body {
+    min-height: 100dvh;
+    padding-left: max(20px, env(safe-area-inset-left));
+    padding-right: max(20px, env(safe-area-inset-right));
+    padding-bottom: calc(72px + env(safe-area-inset-bottom));
+  }
+
+  .header { flex-wrap: wrap; gap: 8px; }
+  .brand { min-width: 0; }
+
+  /* Stage never taller than the visible screen (mobile address bars shrink 100vh) */
+  .stage { max-height: calc(100dvh - 280px); min-height: min(320px, 60dvh); }
+
+  /* Overlays: the card scrolls instead of clipping its buttons */
+  .overlay { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  /* Phones: a blurred full-screen layer over a live video is expensive and made the page lag. */
+  @media (max-width: 900px), (pointer: coarse) {
+    .overlay { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(12, 16, 24, 0.86); transition: none; }
+    .rules-foot input[type="checkbox"], #headsetCheck { width: 22px; height: 22px; flex-shrink: 0; }
+    .rules-foot label { padding: 6px 0; }
+  }
+  #rulesStartBtn, #rulesAgree, .rules-foot label { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+  .rules-hint { font-size: 12px; opacity: .75; margin-top: 6px; }
+  .rules-card { max-height: calc(100dvh - 40px); overflow-y: auto; margin: auto; }
+  .rules-list { overflow: visible; flex-shrink: 0; }
+  .rules-card > * { flex-shrink: 0; }
+  .rules-card > div[style], .rules-card > label { margin-left: 28px !important; margin-right: 28px !important; }
+  .warning-card { max-height: calc(100dvh - 40px); overflow-y: auto; margin: auto; }
+
+  /* Proctoring log / toasts: never wider than the screen */
+  #proctoring-log-panel { width: min(320px, calc(100vw - 32px)); }
+  #proctoring-toast-stack { max-width: min(320px, calc(100vw - 32px)); }
+  #proctoring-notif-root { left: max(16px, env(safe-area-inset-left)); bottom: max(16px, env(safe-area-inset-bottom)); }
+
+  /* Touch devices: comfortable tap targets, no sticky hover states */
+  @media (pointer: coarse) {
+    button { min-height: 44px; }
+    #proctoring-log-toggle { min-height: 40px; }
+    .rules-foot input, .rules-card input[type="checkbox"] { width: 22px; height: 22px; flex-shrink: 0; }
+  }
+  @media (hover: none) {
+    button:hover { box-shadow: none; border-color: var(--border); }
+    .btn-end:hover { box-shadow: 0 10px 24px rgba(229, 83, 61, 0.35); }
+  }
+
+  /* Tablet / phone portrait */
+  @media (max-width: 860px) {
+    body { padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
+    .dock-left { width: 100%; }
+    .status-bar { flex: 1; }
+  }
+
+  @media (max-width: 640px) {
+    /* the 640px rule above shrinks the bottom padding; keep room for the fixed Activity Log button */
+    body { padding-top: 12px; padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
+    .brand span { display: none; }
+    .stage { max-height: calc(100dvh - 230px); min-height: 300px; }
+    .cand-panel { min-width: 96px; }
+    .ai-name { font-size: 18px; }
+    .rules-head { padding: 18px 18px 14px; }
+    .rules-head h2 { font-size: 21px; }
+    .rules-list { padding: 12px 12px 4px; }
+    .rules-foot { padding: 14px 18px 20px; }
+    .rules-card > div[style], .rules-card > label { margin-left: 18px !important; margin-right: 18px !important; }
+    .warning-card { padding: 22px 18px 18px; }
+  }
+
+  /* Very narrow phones */
+  @media (max-width: 360px) {
+    .timer, .live-pill { font-size: 11.5px; padding: 5px 9px; }
+    #muteBtn { padding: 10px 14px; }
+    .ai-panel .ai-caption { font-size: 14px; padding: 10px 12px; }
+  }
+
+  /* Phones / small laptops held sideways or with little height */
+  @media (max-height: 560px) {
+    body { padding-top: 8px; padding-bottom: calc(60px + env(safe-area-inset-bottom)); }
+    .header { padding-bottom: 8px; }
+    .room { padding: 8px; border-radius: 16px; }
+    .stage {
+      aspect-ratio: auto;
+      height: calc(100dvh - 206px);
+      max-height: none;
+      min-height: 180px;
+    }
+    .ai-panel .ai-mark { width: 72px; height: 72px; font-size: 26px; margin-top: -50px; }
+    .ai-name { font-size: 16px; }
+    .ai-name span { font-size: 11px; margin-top: 2px; }
+    .ai-panel .ai-caption { font-size: 14px; padding: 8px 12px; bottom: 10px; max-height: 40%; }
+    .cand-panel { width: 22%; min-width: 96px; max-width: 170px; right: 10px; bottom: 10px; top: auto; }
+    .ai-speaking-badge { top: 12px; right: 12px; left: auto; }
+    .dock { grid-template-columns: 1fr auto; justify-items: stretch; padding-top: 8px; }
+    .dock-right { display: none; }
+    .dock-left { width: auto; justify-content: flex-start; flex-wrap: nowrap; }
+    .btn-end { min-width: 0; width: auto; padding: 11px 22px; }
+    .fs-note { margin-top: 6px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+  }
 </style>
 </head>
 <body>
@@ -797,15 +909,21 @@
         <li><div class="ri">⛶</div><div><b>Stay in fullscreen on this tab.</b><span>Do not switch tabs, open other windows or exit fullscreen.</span></div></li>
         <li><div class="ri">👁</div><div><b>Keep your face visible and look at the screen.</b><span>Looking away for more than a few seconds is recorded as a warning.</span></div></li>
         <li><div class="ri">📵</div><div><b>No phones, notes, books or other people.</b><span>The camera checks for devices, papers and additional faces throughout.</span></div></li>
+        <li><div class="ri">🔇</div><div><b>Be alone, and answer on your own.</b><span>Any voice other than yours while you answer is detected and recorded. Ordinary background noise (fan, traffic) is ignored.</span></div></li>
         <li><div class="ri">⌨</div><div><b>No copying, pasting or developer tools.</b><span>These actions are detected and recorded.</span></div></li>
         <li><div class="ri">🎙</div><div><b>Answer out loud, then pause.</b><span>When you stop speaking for a few seconds, the interviewer moves to the next question.</span></div></li>
         <li class="strict"><div class="ri">⚠</div><div><b>Use respectful language at all times.</b><span>Abusive or offensive language ends the interview immediately.</span></div></li>
         <li class="strict"><div class="ri">⏹</div><div><b>Repeated violations end the interview.</b><span>You will see a warning each time; after the limit, the session closes automatically.</span></div></li>
       </ul>
+      <div style="margin:14px 0 0;font-size:13px">
+        <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:6px"><b>Microphone check</b><span id="micCheckMsg">Say "Hello" out loud…</span></div>
+        <div style="height:8px;border-radius:99px;background:rgba(127,127,127,.25);overflow:hidden"><div id="micMeterBar" style="height:100%;width:0;border-radius:99px;background:#2f9e6e;transition:width .08s"></div></div>
+      </div>
       <label style="display:flex;gap:8px;align-items:center;margin:12px 0 0;font-size:13px;opacity:.9"><input type="checkbox" id="headsetCheck"> I'm using headphones or earphones (lets me interrupt the interviewer; leave unticked if you use speakers).</label>
       <div class="rules-foot">
         <label><input type="checkbox" id="rulesAgree"> I have read and agree to follow these rules.</label>
         <button id="rulesStartBtn" disabled>Start interview</button>
+        <div class="rules-hint" id="rulesHint">Tick the box above to enable Start.</div>
       </div>
     </div>
   </div>
@@ -831,9 +949,12 @@
 <script>
   const SESSION_ID = "{{ session_id }}";
   const ACCESS_TOKEN = "{{ access_token }}";
+  // "en" | "hi" | "both" — chosen by the recruiter. START_LANGUAGE is what the interviewer speaks first.
+  const LANGUAGE_MODE = "{{ language_mode|default:'en' }}";
+  const START_LANGUAGE = "{{ current_language|default:'en' }}";
 </script>
 
-<script src="{% static 'js/interview_socket.js' %}?v=20261024a"></script>
+<script src="{% static 'js/interview_socket.js' %}?v=20261030f"></script>
 <script src="{% static 'js/webrtc_client.js' %}?v=20261024a"></script>
 <script src="{% static 'js/stt_recorder.js' %}?v=20261026b"></script>
 <script>
@@ -849,10 +970,12 @@
         data-worker="{% static 'js/object_detect_worker.js' %}?v=20261013"
         data-model-accurate="{% static 'models/yolox_s.onnx' %}"
         data-model-fast="{% static 'models/yolox_tiny.onnx' %}"></script>
-<script src="{% static 'js/proctoring_client.js' %}?v=20261026a"></script>
+<script src="{% static 'js/proctoring_client.js' %}?v=20261030b"></script>
 <script src="{% static 'js/proctoring_notifications.js' %}?v=20261013"></script>
-<script src="{% static 'js/tts_player.js' %}?v=20261026b"></script>
-<script src="{% static 'js/interview_assist.js' %}?v=20261026b"></script>
+<script src="{% static 'js/tts_player.js' %}?v=20261030b"></script>
+<script>window.SILERO_URLS = { worker: "{% static 'js/silero_vad_worker.js' %}?v=20261030b", model: "{% static 'models/silero_vad.onnx' %}" };</script>
+<script src="{% static 'js/silero_vad.js' %}?v=20261030b"></script>
+<script src="{% static 'js/interview_assist.js' %}?v=20261030b"></script>
 
 <script>
 const aiPanel = document.getElementById('aiPanel');
@@ -888,6 +1011,7 @@ const FLAG_LABELS = {
   notes_detected: "Notes or book detected",
   reading_suspected: "Possibly reading from outside the screen",
   abusive_language: "Abusive language detected",
+  background_voice: "Another voice heard while answering",
 };
 
 // Calls an optional ProctoringClient method only if it exists, and never
@@ -1021,34 +1145,21 @@ async function boot() {
     const micLabel = ((webrtcClient.getStream().getAudioTracks()[0] || {}).label || '');
     usingHeadset = /headset|headphone|earphone|earbud|airpods|buds|bluetooth/i.test(micLabel);
     headsetCheck.checked = usingHeadset;
+    const micTrack = webrtcClient.getStream().getAudioTracks()[0];
+    if (micTrack) {
+      console.log('[audio] mic settings:', JSON.stringify(micTrack.getSettings()));
+      micTrack.addEventListener('mute', () => console.warn('[audio] mic track MUTED by the browser/OS'));
+      micTrack.addEventListener('unmute', () => console.warn('[audio] mic track unmuted'));
+    }
     console.log('[audio] mic =', micLabel || '(unknown)', '| headset =', usingHeadset, '| interrupt-by-voice =', bargeEnabled);
-    if (interviewAssist && interviewAssist.init(webrtcClient.getStream())) {
-      if (avatarPlayer.listenTo) avatarPlayer.listenTo(interviewAssist.avatarAnalyser);
-      if (ttsPlayer.prefetchAsides) ttsPlayer.prefetchAsides(BACKCHANNEL_LINES.concat([NUDGE_LINE, MOVE_ON_LINE], THANKS_LINES));
-    }
+    if (interviewAssist) interviewAssist.init(webrtcClient.getStream());   // just the mic level meter; nothing heavy
 
-    // Proctoring library init is wrapped separately so that if the
-    // MediaPipe/face-api CDN scripts (loaded with `defer` in <head>)
-    // haven't finished loading yet, or fail to load at all, the
-    // candidate's camera preview and interview flow still work — only
-    // face-based proctoring signals are skipped, not the whole
-    // interview. Without this, an exception thrown here (e.g.
-    // "FaceMesh is not defined") would be caught by the outer catch
-    // below and show a fake "camera/mic access failed" error even
-    // though the camera itself is working fine.
-    try {
-      proctoringClient.startFaceMesh(webrtcClient.getVideoElement());
-      proctoringClient.startFaceMatch(webrtcClient.getVideoElement());
-    } catch (proctoringErr) {
-      console.warn('[boot] face-based proctoring failed to start (camera still works):', proctoringErr);
-    }
-    // Phone / notes detection (TF.js COCO-SSD). Separate from the face
-    // checks above so a failure here never disables face proctoring.
-    callProctoring('startObjectDetection', webrtcClient.getVideoElement());
-    proctoringClient.startBrowserEventDetection();
+    // The face / object / voice models are big (tens of MB) and would freeze a phone while the
+    // rules screen is showing, so they start AFTER the Start tap, one at a time (startHeavyServices).
 
     fsNote.textContent = '';
     rulesOverlay.classList.add('show');
+    micMeterLoop();
 
   } catch (err) {
     console.error('[boot] failed to initialize camera/mic:', err);
@@ -1062,54 +1173,144 @@ const RULES_SPOKEN =
   "Welcome to your White Force AI interview. Before we begin, here are the rules. " +
   "Please stay in fullscreen and do not switch tabs or open other windows. " +
   "Keep your face clearly visible and look at the screen. Looking away for more than a few seconds is recorded as a warning. " +
-  "Phones, notes, books and other people are not allowed. Copying, pasting and developer tools are not allowed either. " +
+  "Phones, notes, books and other people are not allowed. You must be alone: if another person's voice is heard while you answer, it is recorded as a violation. " +
+  "Copying, pasting and developer tools are not allowed either. " +
   "Please use respectful language at all times. Abusive language will end the interview immediately. " +
   "Each rule break is recorded, and repeated violations will end the interview automatically. " +
   "When you finish an answer, simply pause for a few seconds and I will move on. Let's begin.";
+const RULES_SPOKEN_HI =
+  "व्हाइट फोर्स के एआई इंटरव्यू में आपका स्वागत है। शुरू करने से पहले, ये रहे नियम। " +
+  "कृपया फुल स्क्रीन में रहिए, और दूसरे टैब या विंडो मत खोलिए। " +
+  "अपना चेहरा कैमरे के सामने साफ़ रखिए और स्क्रीन की ओर देखिए। कुछ सेकंड से ज़्यादा इधर-उधर देखने पर चेतावनी दर्ज की जाती है। " +
+  "फ़ोन, नोट्स, किताबें और दूसरे लोग अनुमति में नहीं हैं। आपको अकेले रहना है, और जवाब देते समय अगर किसी और की आवाज़ सुनाई दी, तो उसे उल्लंघन के रूप में दर्ज किया जाएगा। " +
+  "कॉपी, पेस्ट और डेवलपर टूल्स की भी अनुमति नहीं है। " +
+  "कृपया हर समय सम्मानजनक भाषा का प्रयोग कीजिए। अपशब्द कहने पर इंटरव्यू तुरंत समाप्त हो जाएगा। " +
+  "हर नियम का उल्लंघन दर्ज होता है, और बार-बार उल्लंघन होने पर इंटरव्यू अपने-आप समाप्त हो जाएगा। " +
+  "जब आपका जवाब पूरा हो जाए, तो बस कुछ सेकंड रुक जाइए, और मैं अगले सवाल पर चली जाऊँगी। तो चलिए, शुरू करते हैं।";
 const RULES_MAX_MS = 90000;   // safety net: never get stuck on the rules
 const rulesOverlay = document.getElementById('rulesOverlay');
 const rulesAgree = document.getElementById('rulesAgree');
 const rulesStartBtn = document.getElementById('rulesStartBtn');
 const headsetCheck = document.getElementById('headsetCheck');
+const micMeterBar = document.getElementById('micMeterBar');
+const micCheckMsg = document.getElementById('micCheckMsg');
+let micPeakSeen = -120;
+// Live level bar on the rules screen: the candidate sees at once whether the microphone hears them.
+let micMeterTimer = null;
+let micMeterWidth = '';
+let micMeterText = '';
+function micMeterLoop() {
+  if (micMeterTimer) return;
+  micMeterTimer = setInterval(() => {
+    if (!rulesOverlay.classList.contains('show') || document.hidden) {
+      if (!rulesOverlay.classList.contains('show')) { clearInterval(micMeterTimer); micMeterTimer = null; }
+      return;
+    }
+    const db = interviewAssist && interviewAssist.currentLevelDb ? interviewAssist.currentLevelDb() : -120;
+    const width = Math.round(Math.max(0, Math.min(100, (db + 60) * (100 / 45)))) + '%';
+    if (width !== micMeterWidth) { micMeterWidth = width; micMeterBar.style.width = width; }
+    micPeakSeen = Math.max(micPeakSeen, db);
+    const msg = micPeakSeen > -38 ? 'Microphone is working \u2713'
+      : micPeakSeen > -50 ? 'Too quiet \u2014 speak louder or move closer'
+      : 'Say "Hello" out loud\u2026 (no signal yet: check the microphone volume)';
+    if (msg !== micMeterText) { micMeterText = msg; micCheckMsg.textContent = msg; }
+  }, 125);
+}
 let rulesSpeaking = false;
 let rulesTimer = null;
+let rulesStartWatch = null;
+let rulesVoiceStarted = false;
 
-rulesAgree.addEventListener('change', () => { rulesStartBtn.disabled = !rulesAgree.checked; });
+rulesAgree.addEventListener('change', () => {
+  rulesStartBtn.disabled = !rulesAgree.checked;
+  document.getElementById('rulesHint').style.display = rulesAgree.checked ? 'none' : '';
+});
 rulesStartBtn.addEventListener('click', () => {
   usingHeadset = headsetCheck.checked;
   bargeEnabled = usingHeadset;
   rulesOverlay.classList.remove('show');
+  // Phones only allow audio that is unlocked inside the tap itself, so do it
+  // here, before anything is awaited.
+  try {
+    const ctx = ttsPlayer._ensureAudio();
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    const blip = ctx.createBufferSource();
+    blip.buffer = ctx.createBuffer(1, 1, 22050);
+    blip.connect(ctx.destination);
+    blip.start(0);
+  } catch (err) { /* browser voice fallback still works */ }
   enterFullscreenAndConnect();
+  startHeavyServices();
 });
 
+// Face mesh, face match, phone/notes detection, the voice detector and the pre-recorded interjections are
+// started one after another (not all at once) so the first spoken rules and the page stay smooth on a phone.
+let heavyStarted = false;
+function startHeavyServices() {
+  if (heavyStarted) return;
+  heavyStarted = true;
+  const slow = IS_PHONE ? 1 : 0.5;                       // PCs can take the steps closer together
+  const step = (ms, fn) => setTimeout(() => {
+    const run = () => { try { fn(); } catch (err) { console.warn('[boot] optional service failed:', err); } };
+    if (window.requestIdleCallback) requestIdleCallback(run, { timeout: 2500 }); else run();
+  }, ms * slow);
+  step(1500, () => proctoringClient.startFaceMesh(webrtcClient.getVideoElement()));
+  step(4000, () => proctoringClient.startFaceMatch(webrtcClient.getVideoElement()));
+  step(6500, () => interviewAssist && interviewAssist.startSilero && interviewAssist.startSilero());
+  step(9000, () => callProctoring('startObjectDetection', webrtcClient.getVideoElement()));
+  step(25000, () => proctoringClient.reportTrackingStatus());     // tell the server which checks are running
+  step(90000, () => proctoringClient.reportTrackingStatus());
+  step(13000, () => { if (ttsPlayer.prefetchAsides && interviewAssist && interviewAssist.ctx) ttsPlayer.prefetchAsides(prefetchAsideLines()); });
+}
+
 async function enterFullscreenAndConnect() {
-  await ProctoringClient.requestFullscreen();
+  // Fullscreen is best effort: iPhones don't have it and some Android
+  // browsers never answer, which used to freeze the Start button.
+  const fsDone = Promise.race([
+    ProctoringClient.requestFullscreen(),
+    new Promise((resolve) => setTimeout(resolve, 1200)),
+  ]);
+  await fsDone;
   fsNote.textContent = '';
   startTimer();
 
   // Proctoring starts now (rules apply while they are read out); the
   // interview itself connects once the rules have been spoken.
   proctoringClient.connect();
+  proctoringClient.startBrowserEventDetection();
   callProctoring('recalibratePose');      // candidate is looking at the screen now
-  aiCaption.textContent = RULES_SPOKEN;
+  const rulesText = ttsPlayer.lang === 'hi' ? RULES_SPOKEN_HI : RULES_SPOKEN;
+  aiCaption.textContent = rulesText;
   rulesSpeaking = true;
   rulesTimer = setTimeout(finishRules, RULES_MAX_MS);
-  ttsPlayer.speak(RULES_SPOKEN);
+  // If the rules never start playing (audio blocked), don't wait 90 s.
+  rulesStartWatch = setTimeout(() => { if (!rulesVoiceStarted) finishRules(); }, 12000);
+  ttsPlayer.speak(rulesText);
 }
 
 function finishRules() {
   if (!rulesSpeaking) return;
   rulesSpeaking = false;
   clearTimeout(rulesTimer);
+  clearTimeout(rulesStartWatch);
   aiCaption.textContent = 'Connecting…';
   setUiState('connecting');
   interviewSocket.connect();
 }
 
+let firstTurnSeen = false;
+interviewSocket.on('open', () => {
+  if (firstTurnSeen) return;
+  aiCaption.textContent = 'Preparing your interview… this takes a few seconds.';
+  statusText.textContent = 'Preparing your interview…';
+});
+
 interviewSocket.on('turn', (turn) => {
+  firstTurnSeen = true;
   console.log('[turn]', turn);
   clearTimeout(thinkingAsideTimer);
   interjected = false;
+  if (turn.language) applyLanguage(turn.language);
 
   if (turn.action === 'speak_company_intro') {
     // No question_id, no "done answering" button — candidate just
@@ -1154,6 +1355,9 @@ interviewSocket.on('error', (message) => {
   retryListeningSoon();
 });
 
+// The server heard the candidate switch language: use that voice for the filler line right away.
+interviewSocket.on('language', applyLanguage);
+
 // The server has the audio and is working on it: show "thinking" at once.
 interviewSocket.on('ack', () => {
   statusText.textContent = 'Thinking…';
@@ -1187,6 +1391,13 @@ interviewSocket.on('reconnecting', ({ attempt }) => {
 interviewSocket.on('reconnected', () => {
   statusText.textContent = 'Reconnected. Continuing…';
 });
+interviewSocket.on('close', (event) => {
+  if (event && (event.code === 4410 || event.code === 4001)) {   // 4410 = already over, 4001 = terminated
+    interviewEnded = true;
+    scheduleEndPage(300);
+  }
+});
+
 interviewSocket.on('gaveUp', () => {
   statusText.textContent = 'Connection lost. Please check your internet and refresh this page to continue.';
 });
@@ -1197,6 +1408,8 @@ document.addEventListener('visibilitychange', () => {
 
 ttsPlayer.on('speakStart', (text) => {
   listenToken += 1;               // the interviewer is talking again: cancel any pending answer-window opening
+  if (rulesSpeaking) rulesVoiceStarted = true;
+  callProctoring('setScreenReading', true);   // reading the question: not "looking away"
   setUiState('speaking');
   avatarPlayer.speakStart(text, ttsPlayer.rate);
 
@@ -1239,7 +1452,9 @@ function beginListening(assistOverrides) {
 }
 
 ttsPlayer.on('speakEnd', (text) => {
+  callProctoring('setScreenReading', false);
   avatarPlayer.speakEnd(text);
+  if (interviewEnded) { scheduleEndPage(1500); return; }     // the closing message was just spoken
   if (Date.now() < ignoreSpeakEndUntil) return;     // this was a cut-off, not a real end
   speakingQuestion = false;
   if (interviewAssist) interviewAssist.stopBargeMonitor();
@@ -1265,6 +1480,7 @@ let answerTimeout = null;
 function stopAndSubmitAnswer() {
   if (!sttRecorder.isRecording || !currentQuestionId) return;
   const heardMs = interviewAssist ? interviewAssist.speechMs : 0;
+  const peakDb = interviewAssist && interviewAssist.peakDb > -120 ? Math.round(interviewAssist.peakDb) : null;
   if (interviewAssist) interviewAssist.stopAnswer();
   clearTimeout(answerTimeout);
   callProctoring('setAnswering', false);
@@ -1283,7 +1499,8 @@ function stopAndSubmitAnswer() {
   if (interjected) falseBarges = 0;
   // reason = why the answer window closed ('silence' | 'said_done' | 'no_answer' | ...):
   // lets the server tell "candidate said nothing" from "browser heard speech, STT got nothing".
-  const extra = { reason: lastSubmitReason || 'manual' };
+  const extra = { reason: lastSubmitReason || 'manual', speech_ms: Math.round(heardMs) };
+  if (peakDb !== null) extra.peak_db = peakDb;
   if (interjected) extra.interjected = true;
   interjected = false;
 
@@ -1298,8 +1515,8 @@ function stopAndSubmitAnswer() {
       // filler spoken at once talks over a candidate who was only pausing in mid-thought.
       const wasNoAnswer = lastSubmitReason === 'no_answer';
       const line = wasNoAnswer
-        ? MOVE_ON_LINE
-        : THANKS_LINES[Math.floor(Math.random() * THANKS_LINES.length)];
+        ? moveOnLine()
+        : thanksLines()[Math.floor(Math.random() * thanksLines().length)];
       lastSubmitReason = null;
       clearTimeout(thinkingAsideTimer);
       const playFiller = () => { if (ttsPlayer.sayAside && !interviewEnded) ttsPlayer.sayAside(line); };
@@ -1329,6 +1546,31 @@ const NUDGE_LINE = "Take your time. Whenever you're ready, please go ahead.";
 const THANKS_LINES = ['Alright.', 'Okay.', 'Got it.'];
 const MOVE_ON_LINE = "No problem, let's move on to the next question.";
 let lastSubmitReason = null;
+
+// Hindi versions of the lines above, used while the interviewer speaks Hindi.
+const BACKCHANNEL_LINES_HI = ['हम्म।', 'जी।', 'ठीक है।'];
+const NUDGE_LINE_HI = 'कोई जल्दी नहीं है। जब आप तैयार हों, कृपया बोलना शुरू कीजिए।';
+const THANKS_LINES_HI = ['ठीक है।', 'अच्छा।', 'जी।'];
+const MOVE_ON_LINE_HI = 'कोई बात नहीं, चलिए अगले सवाल पर चलते हैं।';
+const isHindi = () => ttsPlayer.lang === 'hi';
+const thanksLines = () => (isHindi() ? THANKS_LINES_HI : THANKS_LINES);
+const moveOnLine = () => (isHindi() ? MOVE_ON_LINE_HI : MOVE_ON_LINE);
+const nudgeLine = () => (isHindi() ? NUDGE_LINE_HI : NUDGE_LINE);
+function prefetchAsideLines() {
+  return isHindi()
+    ? BACKCHANNEL_LINES_HI.concat([NUDGE_LINE_HI, MOVE_ON_LINE_HI], THANKS_LINES_HI)
+    : BACKCHANNEL_LINES.concat([NUDGE_LINE, MOVE_ON_LINE], THANKS_LINES);
+}
+
+// The interviewer's language changed (English <-> Hindi, chosen by what the candidate speaks):
+// switch the voice and the filler lines. Safe to call with the current language.
+function applyLanguage(lang) {
+  const next = lang === 'hi' ? 'hi' : 'en';
+  if (ttsPlayer.lang === next) return;
+  ttsPlayer.setLanguage(next);
+  if (ttsPlayer.prefetchAsides && interviewAssist && interviewAssist.ctx) ttsPlayer.prefetchAsides(prefetchAsideLines());
+}
+ttsPlayer.setLanguage(START_LANGUAGE);       // Hindi-only interviews speak Hindi from the very first line
 
 function sayAside(text, { nod = false } = {}) {
   if (!ttsPlayer.sayAside || ttsPlayer.asideBusy) return Promise.resolve(false);
@@ -1367,13 +1609,12 @@ if (interviewAssist) {
       : `Pause detected. Submitting your answer in ${sec}s. Keep speaking to continue.`;
   });
 
-  // A silent nod, never a spoken "Uh-huh": a voice from the speakers in the middle of the
-  // candidate's sentence sounds unnatural and is picked up by the mic and transcribed.
-  interviewAssist.on('backchannel', () => {
-    if (avatarPlayer.nod) avatarPlayer.nod();
-  });
+  // No spoken "Uh-huh": a voice from the speakers in the middle of the candidate's sentence
+  // sounds unnatural and is picked up by the mic and transcribed. (There is no 3D avatar to
+  // nod either; the glowing "Listening" state is the only cue.)
+  interviewAssist.on('backchannel', () => {});
 
-  interviewAssist.on('nudge', () => sayAside(NUDGE_LINE));
+  interviewAssist.on('nudge', () => sayAside(nudgeLine()));
 
   // --- Barge-in: the candidate talks while the interviewer is still speaking ---
   // First sound -> start recording at once (so no words are lost); once it is
@@ -1407,13 +1648,27 @@ if (interviewAssist) {
     // Short pause is enough to end an interjection ("what is the salary?"): 1.7 s.
     interviewAssist.startAnswer({
       initialSpeechMs: heardMs, minSpeechMs: 400,
-      submitSilenceMs: 1700, shortSubmitSilenceMs: 1700,
+      submitSilenceMs: 2200, shortSubmitSilenceMs: 1900,
     });
   });
 
   // "Can you repeat the question?" is handled by the SERVER (turn_intent.py):
   // the reply is submitted after the pause and the interviewer repeats the
   // question once. Handling it here too made the question play twice.
+}
+
+// --- Another voice while the candidate is answering (possible prompting) ---
+// The mic detector (interview_assist.js) ignores background noise; a real VOICE that keeps going
+// while the candidate's own lips are still (ProctoringClient.getMouthState) is reported as the
+// "background_voice" violation. Counted by the server like the other proctoring flags.
+if (interviewAssist) {
+  if (typeof proctoringClient.getMouthState === 'function') {
+    interviewAssist.setMouthProbe(() => proctoringClient.getMouthState());
+  }
+  interviewAssist.on('foreignVoice', (info) => {
+    console.warn('[proctoring] another voice heard while answering:', info);
+    callProctoring('reportBackgroundVoice', info);
+  });
 }
 
 const originalStartRecording = sttRecorder.startRecording.bind(sttRecorder);
@@ -1433,7 +1688,7 @@ proctoringClient.on('flag', ({ flagType, metadata }) => {
     'tab_switch', 'window_blur', 'fullscreen_exit',
     'copy_paste', 'devtools_opened', 'no_face', 'multiple_faces',
     'face_mismatch', 'phone_detected', 'notes_detected', 'reading_suspected',
-    'gaze_away', 'abusive_language',
+    'gaze_away', 'abusive_language', 'background_voice',
   ].includes(flagType);
 
   ProctoringNotifications.push({
@@ -1467,6 +1722,7 @@ proctoringClient.on('terminated', (message) => {
   interviewEnded = true;
   showTerminated(message);
   cleanupAllMedia();
+  scheduleEndPage(7000);
   ProctoringNotifications.push({
     level: 'warning',
     title: 'Interview terminated',
@@ -1505,12 +1761,47 @@ endBtn.addEventListener('click', () => {
       setUiState('ended');
       stopTimer();
       cleanupAllMedia();
+      scheduleEndPage(1500);
     }, 4000);
   }
 });
 
+// --- the interview is over: move to the "interview over" page by itself (no refresh needed) ---
+// The server already marks the session as ended, so loading this same address returns the static end page.
+let endPageTimer = null;
+let endPageAt = Infinity;
+function scheduleEndPage(delayMs) {                 // a sooner request replaces a later one (the 30 s safety net)
+  const at = Date.now() + Math.max(0, delayMs);
+  if (at >= endPageAt) return;
+  clearTimeout(endPageTimer);
+  endPageAt = at;
+  endPageTimer = setTimeout(goToEndPage, Math.max(0, delayMs));
+}
+
+async function goToEndPage() {
+  try {
+    const res = await fetch(window.location.href, { cache: 'no-store', credentials: 'same-origin' });
+    if (res.status === 410) {                     // 410 = this interview has ended: show that page
+      window.location.replace(window.location.href);
+      return;
+    }
+  } catch (err) { /* offline: show the message here instead */ }
+  showEndedHere();
+}
+
+// Same message as the end page, drawn in place when the server could not be asked (e.g. the connection dropped).
+function showEndedHere() {
+  document.body.innerHTML =
+    '<main style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;' +
+    'font-family:system-ui,sans-serif;text-align:center;background:#f4f6fb;color:#1c2333">' +
+    '<div style="max-width:440px;background:#fff;border:1px solid #e3e8f2;border-radius:18px;padding:36px 28px">' +
+    '<h1 style="font-size:22px;margin:0 0 10px">This interview is over</h1>' +
+    '<p style="margin:0;color:#5d667a;line-height:1.55">Thank you for your time. We will contact you soon.</p></div></main>';
+}
+
 function handleInterviewClose(message) {
   interviewEnded = true;
+  scheduleEndPage(30000);                         // normally sooner: right after the closing words are spoken
   if (endInterviewFallbackTimer) {
     clearTimeout(endInterviewFallbackTimer);
     endInterviewFallbackTimer = null;

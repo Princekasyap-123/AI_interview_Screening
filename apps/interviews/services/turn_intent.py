@@ -41,6 +41,7 @@ from apps.ai_engine.prompts.turn_intent_prompt import (
     build_classify_user_prompt,
     build_reply_user_prompt,
 )
+from apps.interviews.services import scheduling
 from apps.interviews.services.abuse_filter import find_abusive_terms
 
 logger = logging.getLogger(__name__)
@@ -52,10 +53,30 @@ INTENT_CANDIDATE_QUESTION = "candidate_question"
 INTENT_OFF_TOPIC = "off_topic"
 INTENT_UNCLEAR = "unclear"      # background noise / someone else talking / not addressed to the interviewer
 INTENT_ABUSIVE = "abusive"
+INTENT_RESCHEDULE = "reschedule"    # "I am not ready" / "I don't want to give the interview now"
 _VALID = {
     INTENT_ANSWER, INTENT_REPEAT, INTENT_CLARIFICATION, INTENT_CANDIDATE_QUESTION,
-    INTENT_OFF_TOPIC, INTENT_UNCLEAR, INTENT_ABUSIVE,
+    INTENT_OFF_TOPIC, INTENT_UNCLEAR, INTENT_ABUSIVE, INTENT_RESCHEDULE,
 }
+
+# The candidate cannot / does not want to interview right now. Short replies only: a long
+# answer that happens to contain "later" is an answer.
+_RESCHEDULE_RE = re.compile(
+    r"\bnot ready\b|\breschedule\b|\bre-schedule\b|\bpostpone\b|\bsome other time\b|\banother time\b|\banother day\b"
+    r"|\b(?:don't|do not|dont|doesn't|can't|cannot|can not|won't) (?:want to |wish to |like to )?(?:give|take|do|attend|continue|have|appear for)(?: with)?(?: this| the| my)? interview\b"
+    r"|\b(?:not|isn't|is not) (?:a )?(?:good|right|suitable|convenient) time\b|\bbad time\b"
+    r"|\b(?:i(?:'m| am)|i have been) (?:very )?busy (?:right )?now\b"
+    r"|\b(?:can|could) we (?:do|have|take|schedule|continue) (?:it|this|the interview) (?:later|tomorrow|another|some other|next)"
+    r"|\b(?:abhi|aaj) nahi\b|\bbaad mein\b|\bkal karte\b|\btaiyaar nahi\b|\btayyar nahi\b"
+    r"|अभी तैयार नहीं|बाद में|अभी नहीं|इंटरव्यू नहीं (?:देना|देनी|दे)|समय नहीं है",
+    re.IGNORECASE,
+)
+_RESCHEDULE_MAX_WORDS = 22
+# Built from the settings (working hours, one-month window) so the spoken rule is the real rule.
+RESCHEDULE_ASK = (
+    "No problem at all. When would be a comfortable time for you? Please tell me a date and a time "
+    f"on a working day, Monday to Friday between {scheduling.hours_phrase()}, within the next {scheduling.max_days()} days."
+)
 
 # Obvious "please repeat" requests are answered without any LLM call at all.
 _REPEAT_FAST_RE = re.compile(
@@ -91,6 +112,13 @@ CANDIDATE_QUESTION_FALLBACK = (
 )
 ABOUT_AI_REPLY = "I'm the AI interviewer from White Force, and I'll be the one asking the questions today."
 COMPANY_REPLY = "This interview is being conducted by White Force."
+HOW_KNOW_REPLY = (
+    "Your application was shortlisted by the White Force recruiting team, "
+    "and that is why you have been invited to this screening interview."
+)
+GREETING_REPLY = "I'm doing well, thank you for asking."
+THANKS_REPLY = "You're welcome."
+DURATION_REPLY = "This is a short screening interview, and it usually takes around fifteen to twenty minutes."
 
 # Short questions ABOUT THE INTERVIEWER ("tell me about yourself", "who are you")
 # and "which company is this" are answered with fixed text: no LLM call, so
@@ -104,6 +132,24 @@ _ABOUT_AI_RE = re.compile(
 _COMPANY_RE = re.compile(
     r"\b(?:which|what) (?:company|organi[sz]ation)\b|\bcompany(?:'s)? name\b"
     r"|\bname of (?:the|your|this) (?:company|organi[sz]ation)\b|\bwho (?:do you|are you) work(?:ing)? for\b",
+    re.IGNORECASE,
+)
+# "How do you know me / why was I called / where did you get my details".
+_HOW_KNOW_RE = re.compile(
+    r"\bhow (?:do|did|come) you (?:know|have) (?:me|my)\b|\bwhere did you (?:get|find) (?:my|me)\b"
+    r"|\bhow did you (?:get|find) (?:my|me)\b|\bwhy (?:am i|was i|have i been|did you) (?:being )?(?:interview|call|select|shortlist|contact|invit)"
+    r"|\bhow (?:was|am) i (?:selected|shortlisted|chosen)\b|\bwho (?:told|gave) you my\b"
+    r"|(?:aap|tum)\s+mujhe\s+kaise\s+(?:jaan|jaa?nt)|mere\s+(?:details|number|naam)\s+(?:kahan|kaise)"
+    r"|आप\s+मुझे\s+कैसे\s+जान|मेरी\s+(?:जानकारी|डिटेल)\s+कहाँ",
+    re.IGNORECASE,
+)
+_GREETING_RE = re.compile(
+    r"^\W*(?:hi|hello|hey)?\W*(?:how are you|how're you|how do you do|kaise ho|kaisi ho|aap kaise ho|आप कैसे हैं|आप कैसी हैं)\W*(?:today)?\W*$",
+    re.IGNORECASE,
+)
+_THANKS_RE = re.compile(r"^\W*(?:ok(?:ay)?\W+)?(?:thanks?|thank you|shukriya|dhanyavaad|धन्यवाद|शुक्रिया)(?: so much| a lot)?\W*$", re.IGNORECASE)
+_DURATION_RE = re.compile(
+    r"\bhow (?:long|much time)\b.*\b(?:interview|take|last|go)\b|\bhow many (?:more )?questions\b",
     re.IGNORECASE,
 )
 _SHORT_QUERY_MAX_WORDS = 14
@@ -231,11 +277,22 @@ def classify_fast(transcript_text: str) -> "TurnIntent | None":
     if len(text.split()) <= 12 and _REPEAT_FAST_RE.match(text):
         return TurnIntent(INTENT_REPEAT, reply=REPEAT_REPLY, source="keywords")
 
+    if len(text.split()) <= _RESCHEDULE_MAX_WORDS and _RESCHEDULE_RE.search(text):
+        return TurnIntent(INTENT_RESCHEDULE, reply=RESCHEDULE_ASK, source="keywords")
+
     if len(text.split()) <= _SHORT_QUERY_MAX_WORDS:
         if _ABOUT_AI_RE.search(text):
             return TurnIntent(INTENT_CANDIDATE_QUESTION, reply=ABOUT_AI_REPLY, source="keywords")
         if _COMPANY_RE.search(text):
             return TurnIntent(INTENT_CANDIDATE_QUESTION, reply=COMPANY_REPLY, source="keywords")
+        if _HOW_KNOW_RE.search(text):
+            return TurnIntent(INTENT_CANDIDATE_QUESTION, reply=HOW_KNOW_REPLY, source="keywords")
+        if _GREETING_RE.match(text):
+            return TurnIntent(INTENT_CANDIDATE_QUESTION, reply=GREETING_REPLY, source="keywords")
+        if _THANKS_RE.match(text):
+            return TurnIntent(INTENT_CANDIDATE_QUESTION, reply=THANKS_REPLY, source="keywords")
+        if _DURATION_RE.search(text):
+            return TurnIntent(INTENT_CANDIDATE_QUESTION, reply=DURATION_REPLY, source="keywords")
 
     if not _needs_llm_check(text):
         return TurnIntent()
@@ -280,6 +337,9 @@ def classify_reply_llm(question_text: str, transcript_text: str) -> TurnIntent:
 
     if intent == INTENT_REPEAT:
         return TurnIntent(INTENT_REPEAT, reply=REPEAT_REPLY, source="llm")
+
+    if intent == INTENT_RESCHEDULE:
+        return TurnIntent(INTENT_RESCHEDULE, reply=RESCHEDULE_ASK, source="llm")
 
     if intent == INTENT_UNCLEAR:
         return TurnIntent(INTENT_UNCLEAR, reply=UNCLEAR_REPLY, source="llm")

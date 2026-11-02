@@ -4,6 +4,8 @@ import asyncio
 import base64
 import logging
 import os
+import shutil
+import time
 import uuid
 from collections import deque
 from urllib.parse import parse_qs
@@ -15,9 +17,18 @@ from django.conf import settings
 
 from apps.ai_engine.stt_client import stt_client
 from apps.candidates.services import resolve_candidate_profile
-from apps.interviews.models import InterviewSession
+from apps.interviews.models import ConversationTurn, InterviewSession, Question
 from apps.interviews.services.echo_guard import is_echo
+from apps.interviews.services.stt_vocab import build_prompt, build_terms, correct_terms
 from apps.interviews.services.interview_state import InterviewFSM, TurnAction
+from apps.interviews.services.language import (
+    HI,
+    MODE_HI,
+    detect_language,
+    stt_language_for,
+    to_hindi,
+    warm_hindi_in_background,
+)
 from apps.interviews.services.speech_cleanup import looks_unfinished
 
 MAX_CONTINUATIONS = 2           # per question: how often an unfinished sentence may be waited for
@@ -93,6 +104,12 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=4403)
             return
 
+        # A finished interview cannot be re-entered (the link has expired).
+        if self.session.status in ("completed", "terminated"):
+            logger.info("WebSocket connect rejected — session %s already ended", self.session_id)
+            await self.close(code=4410)
+            return
+
         # One candidate message is processed at a time: overlapping submits
         # (e.g. a barge-in right after an auto-submit) queue up instead of racing.
         self._turn_lock = asyncio.Lock()
@@ -103,6 +120,13 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
         self._echo_ignores = {}      # question_id -> how many echoes were silently dropped
         self._partial = {}           # question_id -> words heard so far in an answer that stopped mid-sentence
         self._continuations = {}     # question_id -> how many times we kept listening
+
+        # Interview language: "en" / "hi" / "both" (see services/language.py). _lang is the
+        # language the interviewer is speaking right now; in "both" it follows the candidate.
+        self._lang_mode = getattr(self.session, "language_mode", "en") or "en"
+        self._lang = getattr(self.session, "current_language", "en") or "en"
+        if self._lang_mode == MODE_HI:
+            self._lang = HI
 
         self.group_name = f"interview_{self.session_id}"
         await self.channel_layer.group_add(self.group_name, self.channel_name)
@@ -203,11 +227,13 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
             # Reconnect: pick up exactly where the interview was.
             fsm = await self._build_fsm(session)
             turn = await blocking(fsm.resume_turn)()
+            await self._warm_hindi(fsm)
             await self._send_turn(turn)
             return
 
         fsm = await self._build_fsm(session)
         turn = await blocking(fsm.start)()
+        await self._warm_hindi(fsm, include_intro=True)
         await self._send_turn(turn)
 
     async def _handle_ready_for_question(self):
@@ -251,8 +277,10 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
         # "thinking" and play a filler word) while STT + the LLM work.
         await self.send_json({"type": "ack", "question_id": str(question_id)})
 
+        spoken_language = ""
+        transcript_text = ""
         try:
-            transcript_text = await self._transcribe_audio(audio_path)
+            transcript_text, spoken_language = await self._transcribe_audio(audio_path)
         except RuntimeError as exc:
             logger.error(
                 "STT failed for session %s question %s: %s",
@@ -260,7 +288,14 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
             )
             transcript_text = ""
         finally:
+            await self._keep_stt_sample(audio_path, transcript_text, spoken_language)
             await self._cleanup_audio_file(audio_path)
+
+        logger.info(
+            "Session %s: heard %r (reason=%s, speech=%sms, peak=%sdB, interjected=%s)",
+            self.session_id, (transcript_text or "")[:200], content.get("reason"),
+            content.get("speech_ms"), content.get("peak_db"), interjected,
+        )
 
         session = await self._refresh_session()
         fsm = await self._build_fsm(session)
@@ -283,6 +318,15 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
                 await self._send_turn(turn)
                 return
             transcript_text = ""      # keeps echoing: fall through to the "didn't catch that" path
+
+        # English <-> Hindi: follow the language the candidate actually spoke.
+        if transcript_text:
+            new_lang = detect_language(transcript_text, spoken_language, self._lang_mode, self._lang)
+            if new_lang != self._lang:
+                await self._switch_language(new_lang, fsm)
+
+        if transcript_text:
+            await self._log_candidate(transcript_text, question_id, self._lang)
 
         # Mid-sentence stop ("...worked with Django and"): keep listening and join the
         # next part to it, the way a person waits for the end of the thought.
@@ -310,6 +354,7 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
         if not (transcript_text or "").strip():
             heard_speech = interjected or content.get("reason") in ("silence", "said_done")
             if heard_speech:
+                await self._log_candidate("", question_id, self._lang, kind="inaudible")
                 turn = await blocking(fsm.no_speech_turn)(question_id)
                 if turn is None and interjected:
                     turn = await blocking(fsm.repeat_turn)(question_id)
@@ -399,8 +444,49 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
         return filepath
 
     @sync_to_async(thread_sensitive=False)
-    def _transcribe_audio(self, audio_path: str) -> str:
-        return stt_client.transcribe(audio_path)
+    def _transcribe_audio(self, audio_path: str) -> tuple[str, str]:
+        """(text, language Whisper heard). Only "both" needs Whisper's own language detection;
+        English keeps the project default and "hi" forces Hindi, through the plain call."""
+        language = stt_language_for(self._lang_mode)
+        prompt, terms = self._stt_vocabulary(language)
+        if language == "":                       # "both": let Whisper tell English from Hindi
+            text, spoken = stt_client.transcribe_detailed(audio_path, language="", prompt=prompt)
+            return correct_terms(text, terms), spoken
+        text = stt_client.transcribe(audio_path, language=language, prompt=prompt)
+        return correct_terms(text, terms), ""
+
+    def _stt_vocabulary(self, language: str = "en") -> tuple[str, list[str]]:
+        """Whisper priming text + the vocabulary used to fix near-miss spellings (built once per interview
+        and language: Hindi speech gets a Hindi hint)."""
+        cache = self.__dict__.setdefault("_stt_vocab_cache", {})
+        cached = cache.get(language)
+        if cached is None:
+            try:
+                profile = resolve_candidate_profile(self.session.candidate)
+                jd = self.session.job_description_text
+                name = (profile or {}).get("name") or getattr(self.session.candidate, "name", "")
+                cached = (build_prompt(jd, profile, name, language), build_terms(jd, profile))
+            except Exception as exc:             # the vocabulary only helps; never block a transcript
+                logger.warning("Could not build the speech vocabulary: %s", exc)
+                cached = ("", [])
+            cache[language] = cached
+        return cached
+
+    @sync_to_async(thread_sensitive=False)
+    def _keep_stt_sample(self, audio_path: str, transcript: str, spoken_language: str) -> None:
+        """Opt-in (STT_KEEP_AUDIO=1): keeps each answer's audio with what Whisper heard, in media/stt_samples/,
+        so real recordings can be used to compare speech engines. Off by default - it stores candidate voices."""
+        if not getattr(settings, "STT_KEEP_AUDIO", False) or not audio_path or not os.path.exists(audio_path):
+            return
+        try:
+            folder = os.path.join(str(settings.MEDIA_ROOT), "stt_samples")
+            os.makedirs(folder, exist_ok=True)
+            stem = f"{self.session_id}_{int(time.time())}_{self._lang_mode}"
+            shutil.copyfile(audio_path, os.path.join(folder, stem + os.path.splitext(audio_path)[1]))
+            with open(os.path.join(folder, stem + ".txt"), "w", encoding="utf-8") as fh:
+                fh.write(f"language_mode={self._lang_mode} spoken={spoken_language}\n{transcript or ''}\n")
+        except OSError as exc:
+            logger.warning("Could not keep the STT sample: %s", exc)
 
     @sync_to_async(thread_sensitive=False)
     def _cleanup_audio_file(self, audio_path: str) -> None:
@@ -417,9 +503,100 @@ class InterviewConsumer(AsyncJsonWebsocketConsumer):
     async def _send_turn(self, turn: dict):
         action = turn.get("action", "")
         action = getattr(action, "value", action)          # TurnAction is a str-Enum
+        original = dict(turn)
+        turn = await self._localize_turn(turn, str(action))
         if turn.get("text") and str(action).startswith("speak_"):
             self._recent_spoken.append(turn["text"])
+        await self._log_interviewer(str(action), original, turn)
         await self.send_json({"type": "turn", **turn})
+
+    # ------------------------------------------------------------------
+    # Language (English / Hindi)
+    # ------------------------------------------------------------------
+
+    async def _localize_turn(self, turn: dict, action: str) -> dict:
+        """Adds "language" to the turn and, when the interviewer is speaking Hindi,
+        replaces the spoken text with its Hindi version. If a line cannot be
+        translated it is sent in English and marked "en" — the browser then uses the
+        English voice, so the candidate always hears something sensible."""
+        turn = dict(turn)
+        turn["language"] = "en"
+        if self._lang != HI:
+            return turn
+
+        key = "text" if str(action).startswith("speak_") else ("message" if action == "close_interview" else "")
+        if not key or not turn.get(key):
+            turn["language"] = HI
+            return turn
+
+        hindi = await sync_to_async(to_hindi, thread_sensitive=False)(turn[key])
+        if hindi:
+            turn[key] = hindi
+            turn["language"] = HI
+        return turn
+
+    # ------------------------------------------------------------------
+    # Full conversation log (shown to the recruiter on the dashboard)
+    # ------------------------------------------------------------------
+
+    async def _log_interviewer(self, action: str, original: dict, sent: dict) -> None:
+        key = "text" if action.startswith("speak_") else ("message" if action == "close_interview" else "")
+        if not key or not sent.get(key):
+            return
+        kind = {"speak_company_intro": "intro", "speak_intro": "question", "speak_question": "question",
+                "speak_follow_up": "reply", "close_interview": "closing"}.get(action, "reply")
+        english = original.get(key) or ""
+        spoken = sent.get(key) or ""
+        await self._store_turn(
+            "interviewer", kind, spoken, english if english != spoken else "",
+            sent.get("language", "en"), sent.get("question_id") or original.get("question_id"),
+        )
+
+    async def _log_candidate(self, text: str, question_id, language: str, kind: str = "answer") -> None:
+        await self._store_turn("candidate", kind, text or "", "", language, question_id)
+
+    async def _store_turn(self, speaker, kind, text, text_en, language, question_id) -> None:
+        try:
+            await sync_to_async(self._write_turn, thread_sensitive=False)(
+                speaker, kind, text, text_en, language, question_id
+            )
+        except Exception as exc:                  # a logging problem must never interrupt the interview
+            logger.warning("Could not store conversation line for %s: %s", self.session_id, exc)
+
+    def _write_turn(self, speaker, kind, text, text_en, language, question_id) -> None:
+        qid = None
+        if question_id:
+            try:
+                qid = Question.objects.filter(pk=question_id, session_id=self.session_id).values_list("pk", flat=True).first()
+            except (ValueError, TypeError):
+                qid = None
+        ConversationTurn.objects.create(
+            session_id=self.session_id, speaker=speaker, kind=kind, text=text, text_en=text_en,
+            language=language or "en", question_id=qid,
+        )
+
+    async def _switch_language(self, new_lang: str, fsm: InterviewFSM) -> None:
+        logger.info("Session %s: interview language %s -> %s", self.session_id, self._lang, new_lang)
+        self._lang = new_lang
+        fsm.session.current_language = new_lang
+        await blocking(self._save_language)(new_lang)
+        # The browser switches its voice + filler lines now, before the next question arrives.
+        await self.send_json({"type": "language", "language": new_lang})
+        if new_lang == HI:
+            await self._warm_hindi(fsm)
+
+    def _save_language(self, lang: str) -> None:
+        InterviewSession.objects.filter(pk=self.session_id).update(current_language=lang)
+
+    async def _warm_hindi(self, fsm: InterviewFSM, include_intro: bool = False) -> None:
+        """Start translating + synthesising the upcoming questions in Hindi in the background."""
+        if self._lang != HI:
+            return
+        try:
+            texts = await blocking(fsm.upcoming_spoken_texts)(include_intro)
+            warm_hindi_in_background(texts)
+        except Exception as exc:                                  # best effort only
+            logger.warning("Hindi warm-up failed for session %s: %s", self.session_id, exc)
 
     async def _build_fsm(self, session: InterviewSession) -> InterviewFSM:
         candidate_profile = await blocking(resolve_candidate_profile)(session.candidate)

@@ -18,7 +18,8 @@ from apps.avatar.services.tts_engine import tts_engine
 
 logger = logging.getLogger(__name__)
 
-_SENTENCE_SPLIT = re.compile(r"""(?<=[.!?…])\s+(?=[A-Z0-9"'(])""")
+# Hindi has no capital letters and ends sentences with "।": allow a split before Devanagari too.
+_SENTENCE_SPLIT = re.compile(r"""(?<=[.!?…।])\s+(?=[A-Z0-9"'(ऀ-ॿ])""")
 
 
 def split_chunks(text: str) -> list[str]:
@@ -43,7 +44,7 @@ def split_chunks(text: str) -> list[str]:
     return out or [str(text)]
 
 
-def prefetch_in_background(texts: list[str]) -> None:
+def prefetch_in_background(texts: list[str], lang: str = "en") -> None:
     """Synthesizes (and caches) every chunk of every text, in order, in one
     daemon thread. Cached chunks cost nothing; errors are only logged."""
     texts = [t for t in texts if t and t.strip()]
@@ -55,7 +56,7 @@ def prefetch_in_background(texts: list[str]) -> None:
         for text in texts:
             for chunk in split_chunks(text):
                 try:
-                    tts_engine.synthesize(chunk, background=True)
+                    tts_engine.synthesize(chunk, background=True, lang=lang)
                     done += 1
                 except Exception as exc:                 # never break the interview
                     logger.warning("TTS prefetch failed for %r: %s", chunk[:60], exc)

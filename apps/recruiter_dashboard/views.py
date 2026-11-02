@@ -2,6 +2,9 @@
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import ValidationError
+from django.db.models import Avg, Count, Q
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.decorators import method_decorator
@@ -9,6 +12,7 @@ from django.views import View
 
 from apps.candidates.models import Candidate
 from apps.interviews.models import InterviewSession
+from apps.interviews.services.language import initial_language
 
 
 @method_decorator(login_required, name="dispatch")
@@ -28,7 +32,22 @@ class DashboardView(View):
             .order_by("-created_at")
         )
 
+        # Headline numbers always describe ALL sessions, not the filtered list.
+        stats = InterviewSession.objects.aggregate(
+            total=Count("id"),
+            completed=Count("id", filter=Q(status=InterviewSession.Status.COMPLETED)),
+            in_progress=Count("id", filter=Q(status=InterviewSession.Status.IN_PROGRESS)),
+            pending=Count("id", filter=Q(status=InterviewSession.Status.PENDING)),
+            terminated=Count("id", filter=Q(status=InterviewSession.Status.TERMINATED)),
+            avg_score=Avg("final_rating__overall_score"),
+            flagged=Count(
+                "id", filter=Q(proctoring_session__countable_violation_count__gt=0)
+            ),
+        )
+
         status_filter = request.GET.get("status")
+        if status_filter not in InterviewSession.Status.values:
+            status_filter = ""
         if status_filter:
             sessions = sessions.filter(status=status_filter)
 
@@ -36,15 +55,20 @@ class DashboardView(View):
         interview_link = None
         selected_id = request.GET.get("session_id")
         if selected_id:
-            selected_session = get_object_or_404(
-                InterviewSession.objects.select_related(
-                    "candidate", "final_rating"
-                ).prefetch_related(
-                    "questions__answer",
-                    "proctoring_session__flags",
-                ),
-                id=selected_id,
-            )
+            try:
+                selected_session = get_object_or_404(
+                    InterviewSession.objects.select_related(
+                        "candidate", "final_rating"
+                    ).prefetch_related(
+                        "questions__answer",
+                        "conversation",
+                        "proctoring_session__flags",
+                    ),
+                    id=selected_id,
+                )
+            except (ValidationError, ValueError):
+                # a malformed ?session_id= used to be a 500
+                raise Http404("Unknown interview session.")
             # Build the full candidate-facing interview URL via reverse().
             # This is the top-level route defined directly in
             # config/urls.py (NOT the one under apps/interviews/urls.py,
@@ -55,6 +79,7 @@ class DashboardView(View):
             #        InterviewRoomView.as_view(), name="interview-room")
             # It has no app namespace since it's declared directly in
             # urlpatterns, not inside an include().
+            self._ensure_rating(selected_session)
             interview_link = request.build_absolute_uri(
                 reverse(
                     "interview-room",
@@ -65,11 +90,26 @@ class DashboardView(View):
                 )
             )
 
+        # Stable serial number per session (oldest = 1), so a card keeps its
+        # number whatever filter is applied.
+        serials = {
+            sid: n for n, sid in enumerate(
+                InterviewSession.objects.order_by("created_at").values_list("id", flat=True), start=1
+            )
+        }
+        sessions = list(sessions)
+        for s in sessions:
+            s.serial = serials.get(s.id, 0)
+        if selected_session is not None:
+            selected_session.serial = serials.get(selected_session.id, 0)
+
         return render(
             request,
             "dashboard.html",
             {
                 "sessions": sessions,
+                "stats": stats,
+                "language_choices": InterviewSession.LanguageMode.choices,
                 "candidates": Candidate.objects.order_by("-created_at"),
                 "selected_session": selected_session,
                 "interview_link": interview_link,
@@ -77,6 +117,22 @@ class DashboardView(View):
                 "status_choices": InterviewSession.Status.choices,
             },
         )
+
+    @staticmethod
+    def _ensure_rating(session):
+        """An ended interview with no rating (no Celery worker was running, or the job failed) gets one now."""
+        from django.utils import timezone
+
+        if session.status not in (InterviewSession.Status.COMPLETED, InterviewSession.Status.TERMINATED):
+            return
+        if hasattr(session, "final_rating") and getattr(session, "final_rating", None) is not None:
+            return
+        if session.termination_reason == InterviewSession.TerminationReason.RESCHEDULED and not session.questions_asked_count:
+            return                                   # rescheduled before answering anything: nothing to rate
+        if session.ended_at and (timezone.now() - session.ended_at).total_seconds() < 60:
+            return                                   # the normal path is still working on it
+        from apps.interviews.services.final_rating import ensure_rating_in_background
+        ensure_rating_in_background(session.id, delay_seconds=0)
 
     def post(self, request):
         candidate_id = request.POST.get("candidate_id")
@@ -107,7 +163,13 @@ class DashboardView(View):
         if job_role_type not in InterviewSession.JobRoleType.values:
             job_role_type = InterviewSession.JobRoleType.WHITE_COLLAR
 
+        language_mode = request.POST.get("language_mode", "").strip()
+        if language_mode not in InterviewSession.LanguageMode.values:
+            language_mode = InterviewSession.LanguageMode.ENGLISH
+
         session = InterviewSession.objects.create(
+            language_mode=language_mode,
+            current_language=initial_language(language_mode),
             candidate=candidate,
             job_description_text=job_description_text,
             max_questions=max_questions,

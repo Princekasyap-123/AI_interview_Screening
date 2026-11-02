@@ -1,6 +1,7 @@
 # apps/interviews/services/interview_state.py
 
 import logging
+import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
@@ -20,7 +21,16 @@ from apps.interviews.services.question_generator import (
     QuestionGenerationError,
     generate_questions_for_session,
 )
+from apps.interviews.services import scheduling
+from apps.interviews.services.language import register_static
 from apps.interviews.services.turn_intent import (
+    ABOUT_AI_REPLY,
+    DURATION_REPLY,
+    GREETING_REPLY,
+    HOW_KNOW_REPLY,
+    THANKS_REPLY,
+    CANDIDATE_QUESTION_FALLBACK,
+    COMPANY_REPLY,
     REPEAT_REPLY,
     INTENT_ABUSIVE,
     INTENT_CANDIDATE_QUESTION,
@@ -28,8 +38,10 @@ from apps.interviews.services.turn_intent import (
     INTENT_ANSWER,
     INTENT_OFF_TOPIC,
     INTENT_REPEAT,
+    INTENT_RESCHEDULE,
     INTENT_UNCLEAR,
     OFF_TOPIC_REPLY,
+    RESCHEDULE_ASK,
     UNCLEAR_REPLY,
     TurnIntent,
     classify_fast,
@@ -79,6 +91,74 @@ COMPANY_INTRO_TEXT = (
     "afterward by our recruiting team. Let's get started."
 )
 
+
+# Hand-written Hindi for the interviewer's fixed lines: used when the interview
+# is (or switches to) Hindi, so these cost no translation call (see language.py).
+_HI_STATIC_LINES = (
+    (COMPANY_INTRO_TEXT,
+     "नमस्ते, और स्वागत है। मैं व्हाइट फोर्स की एआई इंटरव्यूअर हूँ। शुरू करने से पहले एक छोटी सी बात बता दूँ कि आज "
+     "क्या होगा। मैं आपके अनुभव और आपके आवेदन किए हुए पद के आधार पर आपसे कुछ सवाल पूछूँगी। आप बस अपने शब्दों में, "
+     "स्वाभाविक रूप से जवाब दीजिए, ज़्यादा सोचने की ज़रूरत नहीं है। यह कोई लाइव ग्रेडेड टेस्ट नहीं है, बाद में हमारी "
+     "रिक्रूटिंग टीम सब कुछ देखेगी। तो चलिए, शुरू करते हैं।"),
+    (REPEAT_REPLY, "ज़रूर।"),
+    (OFF_TOPIC_REPLY, "मैं व्हाइट फोर्स की एआई इंटरव्यूअर हूँ, और सिर्फ़ इस इंटरव्यू में ही आपकी मदद कर सकती हूँ।"),
+    (UNCLEAR_REPLY, "माफ़ कीजिए, मैं आपकी बात साफ़ नहीं सुन पाई। शायद पीछे कुछ शोर था।"),
+    (QUERY_LIMIT_REPLY,
+     "मैं अभी और सवाल नहीं ले पाऊँगी। आपके सवालों के जवाब रिक्रूटिंग टीम इंटरव्यू के बाद ख़ुशी से देगी। "
+     "कृपया इस सवाल का जवाब दीजिए।"),
+    (CANDIDATE_QUESTION_FALLBACK, "यह एक अच्छा सवाल है। रिक्रूटिंग टीम इंटरव्यू के बाद आपको यह जानकारी देगी।"),
+    (ABOUT_AI_REPLY, "मैं व्हाइट फोर्स की एआई इंटरव्यूअर हूँ, और आज सवाल मैं ही पूछूँगी।"),
+    (COMPANY_REPLY, "यह इंटरव्यू व्हाइट फोर्स की ओर से लिया जा रहा है।"),
+    (HOW_KNOW_REPLY, "व्हाइट फोर्स की रिक्रूटिंग टीम ने आपका आवेदन शॉर्टलिस्ट किया था, इसीलिए आपको इस स्क्रीनिंग इंटरव्यू के लिए बुलाया गया है।"),
+    (GREETING_REPLY, "मैं ठीक हूँ, पूछने के लिए धन्यवाद।"),
+    (THANKS_REPLY, "आपका स्वागत है।"),
+    (DURATION_REPLY, "यह एक छोटा स्क्रीनिंग इंटरव्यू है, और इसमें आमतौर पर पंद्रह से बीस मिनट लगते हैं।"),
+    ("Sorry, the connection dropped for a moment.", "माफ़ कीजिए, कनेक्शन कुछ देर के लिए टूट गया था।"),
+    ("That's the end of the interview. Thank you for your time — our team will follow up with you separately.",
+     "इंटरव्यू यहीं समाप्त होता है। आपके समय के लिए धन्यवाद। हमारी टीम आपसे अलग से संपर्क करेगी।"),
+)
+_HI_HOURS = {1: "एक", 2: "दो", 3: "तीन", 4: "चार", 5: "पाँच", 6: "छह", 7: "सात", 8: "आठ",
+             9: "नौ", 10: "दस", 11: "ग्यारह", 12: "बारह"}
+
+
+def _hi_clock(hour: int) -> str:
+    """24-hour clock hour -> spoken Hindi, e.g. 17 -> 'शाम पाँच बजे'."""
+    part = "सुबह" if hour < 12 else "दोपहर" if hour < 16 else "शाम"
+    return f"{part} {_HI_HOURS.get(hour % 12 or 12, str(hour))} बजे"
+
+
+_HI_STATIC_LINES += (
+    (RESCHEDULE_ASK,
+     "कोई बात नहीं। आपके लिए कौन सा समय सुविधाजनक रहेगा? कृपया सोमवार से शुक्रवार के बीच, "
+     f"{_hi_clock(scheduling.work_start().hour)} से {_hi_clock(scheduling.work_end().hour)} के भीतर, "
+     f"अगले {scheduling.max_days()} दिनों में कोई तारीख और समय बताइए।"),
+    ("Sorry, I couldn't catch the date and time. Please say it like Tuesday at 3 PM, or 5 November at 11 AM.",
+     "माफ़ कीजिए, मैं तारीख और समय समझ नहीं पाई। कृपया ऐसे बताइए, जैसे मंगलवार दोपहर तीन बजे, या पाँच नवंबर सुबह ग्यारह बजे।"),
+    ("I'm sorry, we could not fix a time right now. The recruiting team will contact you to arrange a new slot. Thank you for your time.",
+     "माफ़ कीजिए, अभी हम कोई समय तय नहीं कर पाए। रिक्रूटिंग टीम नया समय तय करने के लिए आपसे संपर्क करेगी। आपके समय के लिए धन्यवाद।"),
+)
+for _en, _hi in _HI_STATIC_LINES:
+    register_static(_en, _hi)
+
+
+RESCHEDULE_MAX_ATTEMPTS = 3        # slots that were understood but not possible (weekend, holiday, ...)
+RESCHEDULE_MAX_MISSES = 5          # replies that could not be understood at all
+RESCHEDULE_NOT_UNDERSTOOD = (
+    "Sorry, I couldn't catch the date and time. Please say it like Tuesday at 3 PM, or 5 November at 11 AM."
+)
+RESCHEDULE_FAILED = (
+    "I'm sorry, we could not fix a time right now. The recruiting team will contact you to arrange "
+    "a new slot. Thank you for your time."
+)
+_CONTINUE_RE = re.compile(
+    r"\b(?:continue|go ahead|let'?s (?:start|begin|continue|go)|i(?:'m| am) ready(?: now)?|never ?mind|start now)\b",
+    re.IGNORECASE,
+)
+_MENTIONS_WHEN_RE = re.compile(
+    r"\d|tomorrow|today|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|evening"
+    r"|next week|\bkal\b|\bparso\b|सोमवार|मंगलवार|बुधवार|गुरुवार|शुक्रवार|शनिवार|रविवार|कल|परसों",
+    re.IGNORECASE,
+)
 
 _QUERY_INTENTS = (
     INTENT_REPEAT, INTENT_CLARIFICATION, INTENT_CANDIDATE_QUESTION, INTENT_OFF_TOPIC, INTENT_UNCLEAR,
@@ -166,6 +246,8 @@ class InterviewFSM:
         when that question is actually spoken (see _prefetch_variants).
         Best effort only.
         """
+        if self.session.language_mode == InterviewSession.LanguageMode.HINDI:
+            return      # nothing is spoken in English: the consumer warms the Hindi versions instead
         try:
             from apps.avatar.services.tts_prefetch import prefetch_in_background
 
@@ -176,6 +258,14 @@ class InterviewFSM:
         except Exception as exc:
             logger.warning("TTS prefetch could not start for session %s: %s", self.session.id, exc)
 
+    def upcoming_spoken_texts(self, include_intro: bool = False) -> list[str]:
+        """The lines (exactly as they will be spoken, name included) of every question
+        not asked yet — what the Hindi translation / audio is prepared for in advance."""
+        texts = [COMPANY_INTRO_TEXT] if include_intro else []
+        for q in self.session.questions.filter(asked_at__isnull=True).order_by("order"):
+            texts.append(self._personalize(q.text))
+        return texts
+
     def _prefetch_variants(self, spoken_text: str) -> None:
         """
         While a question is being spoken, pre-make the lines used if the
@@ -183,6 +273,8 @@ class InterviewFSM:
         under 40 chars and gets MERGED into the next sentence by the chunker,
         so the combined text is what must be warm.
         """
+        if self.session.current_language != "en":
+            return          # these are English audio variants
         try:
             from apps.avatar.services.tts_prefetch import prefetch_in_background
 
@@ -246,6 +338,11 @@ class InterviewFSM:
         last_spoken = self._last_spoken_text(question)
         is_first_answer_to_question = not question.has_answer
 
+        # The candidate asked to reschedule and is now naming a date and time.
+        reschedule_state = question.generation_context.get("reschedule")
+        if reschedule_state and reschedule_state.get("asking"):
+            return self._handle_reschedule_reply(question, transcript_text)
+
         # What gets analysed / stored: on a follow-up, the first answer + the
         # follow-up (never overwrite the first answer).
         full_transcript = build_full_transcript(question, transcript_text)
@@ -279,6 +376,9 @@ class InterviewFSM:
         try:
             if intent.intent == INTENT_ABUSIVE:
                 return self.terminate_for_abuse(question, transcript_text, intent)
+
+            if intent.intent == INTENT_RESCHEDULE:
+                return self._start_reschedule(question, transcript_text)
 
             if intent.intent in _QUERY_INTENTS:
                 turn = self._reply_and_reask_turn(question, transcript_text, intent)
@@ -459,6 +559,137 @@ class InterviewFSM:
             "question_id": str(question.id),
             "text": text.strip(),
         }
+
+    # ------------------------------------------------------------------
+    # "I am not ready": agree a new slot (working days/hours, within a month)
+    # ------------------------------------------------------------------
+
+    def _reschedule_turn(self, question: Question, text: str) -> dict:
+        self._note_reschedule_exchange(question, text)
+        return {"action": TurnAction.SPEAK_FOLLOW_UP, "question_id": str(question.id), "text": text}
+
+    def _note_reschedule_exchange(self, question: Question, reply: str) -> None:
+        """Keeps what the candidate said and what was answered, so the recruiter's transcript shows it."""
+        said = getattr(self, "_reschedule_said", None)
+        if said is None:
+            return
+        self._reschedule_said = None
+        queries = question.generation_context.setdefault("candidate_queries", [])
+        queries.append({
+            "intent": "reschedule",
+            "transcript": (said or "")[:1000],
+            "reply": reply,
+            "at": timezone.now().isoformat(),
+        })
+        question.save(update_fields=["generation_context"])
+
+    def _start_reschedule(self, question: Question, transcript_text: str) -> dict:
+        question.generation_context["reschedule"] = {"asking": True, "attempts": 0, "date": None, "time": None}
+        question.save(update_fields=["generation_context"])
+        logger.info("Session %s: candidate is not ready — asking for a new slot.", self.session.id)
+        return self._handle_reschedule_reply(question, transcript_text, first=True)
+
+    def _handle_reschedule_reply(self, question: Question, text: str, first: bool = False) -> dict:
+        from datetime import datetime as _dt
+
+        state = question.generation_context["reschedule"]
+        self._reschedule_said = text
+
+        def save():
+            question.generation_context["reschedule"] = state
+            question.save(update_fields=["generation_context"])
+
+        def failed_attempt(prompt: str, understood: bool = True) -> dict:
+            key, limit = ("attempts", RESCHEDULE_MAX_ATTEMPTS) if understood else ("misses", RESCHEDULE_MAX_MISSES)
+            state[key] = state.get(key, 0) + 1
+            if state[key] >= limit:
+                return self._finish_reschedule(question, None)
+            save()
+            return self._reschedule_turn(question, prompt)
+
+        if not first and _CONTINUE_RE.search(text):
+            state["asking"] = False
+            save()
+            return self._reschedule_turn(question, f"Alright, let's continue. {self._last_spoken_text(question)}")
+
+        if first and not _MENTIONS_WHEN_RE.search(text):
+            save()
+            return self._reschedule_turn(question, RESCHEDULE_ASK)      # nothing to read yet
+
+        parsed = scheduling.parse_slot(text)
+        day = parsed["date"] or (_dt.strptime(state["date"], "%Y-%m-%d").date() if state.get("date") else None)
+        at = parsed["time"] or (_dt.strptime(state["time"], "%H:%M").time() if state.get("time") else None)
+
+        if day and at:
+            slot = timezone.make_aware(_dt.combine(day, at))
+            ok, code, reason = scheduling.validate_slot(slot)
+            if ok:
+                return self._finish_reschedule(question, slot)
+            state["time"] = None
+            state["date"] = day.strftime("%Y-%m-%d") if code == "hours" else None
+            return failed_attempt(f"Sorry, {reason}. Could you suggest another date and time?")
+
+        if day:
+            noon = timezone.make_aware(_dt.combine(day, scheduling.work_start().replace(hour=12)))
+            ok, code, reason = scheduling.validate_slot(noon)
+            if not ok and code != "hours":
+                state["date"] = None
+                return failed_attempt(f"Sorry, {reason}. Could you suggest another date and time?")
+            state["date"] = day.strftime("%Y-%m-%d")
+            save()
+            return self._reschedule_turn(
+                question,
+                f"Thank you. What time on {day.strftime('%A')}, {day.day} {day.strftime('%B')} would suit you, "
+                f"between {scheduling.hours_phrase()}?",
+            )
+
+        if at:
+            if not (scheduling.work_start() <= at < scheduling.work_end()):
+                return failed_attempt(
+                    f"Sorry, interviews are held only between {scheduling.hours_phrase()}. "
+                    "Could you suggest another date and time?"
+                )
+            state["time"] = at.strftime("%H:%M")
+            save()
+            return self._reschedule_turn(
+                question,
+                f"Thank you. And which date would suit you? Please pick a working day within the next {scheduling.max_days()} days.",
+            )
+
+        if first:
+            save()
+            return self._reschedule_turn(question, RESCHEDULE_ASK)
+        return failed_attempt(RESCHEDULE_NOT_UNDERSTOOD, understood=False)
+
+    def _finish_reschedule(self, question: Question, slot) -> dict:
+        """Closes the session as 'rescheduled'. No final rating: there is nothing to rate."""
+        question.generation_context["reschedule"] = {"asking": False, "slot": slot.isoformat() if slot else None}
+        question.save(update_fields=["generation_context"])
+        if slot:
+            note = (
+                f"Thank you. Your interview has been rescheduled to {scheduling.format_slot(slot)}. "
+                "The recruiting team will send you a new link before then. Have a good day."
+            )
+        else:
+            note = RESCHEDULE_FAILED
+        self._note_reschedule_exchange(question, note)
+        self.session.status = InterviewSession.Status.TERMINATED
+        self.session.termination_reason = InterviewSession.TerminationReason.RESCHEDULED
+        self.session.termination_note = note
+        self.session.rescheduled_for = slot
+        self.session.ended_at = timezone.now()
+        self.session.save(update_fields=[
+            "status", "termination_reason", "termination_note", "rescheduled_for", "ended_at",
+        ])
+        logger.info("Session %s rescheduled for %s", self.session.id, slot)
+        if self.session.questions_asked_count > 0:
+            # Some questions were answered: rate what was said (nothing to rate otherwise).
+            from apps.interviews.services.final_rating import ensure_rating_in_background
+            from apps.interviews.tasks import generate_final_rating
+            session_id = str(self.session.id)
+            transaction.on_commit(lambda: generate_final_rating.delay(session_id))
+            ensure_rating_in_background(session_id, delay_seconds=25)
+        return {"action": TurnAction.CLOSE_INTERVIEW, "message": note}
 
     def _last_spoken_text(self, question: Question) -> str:
         """The exact question / follow-up text the candidate last heard."""
@@ -743,9 +974,11 @@ class InterviewFSM:
             reason,
         )
 
+        from apps.interviews.services.final_rating import ensure_rating_in_background
         from apps.interviews.tasks import generate_final_rating
         session_id = str(self.session.id)
         transaction.on_commit(lambda: generate_final_rating.delay(session_id))
+        ensure_rating_in_background(session_id, delay_seconds=25)      # if no Celery worker picks it up
 
         default_message = (
             "That's the end of the interview. Thank you for your time "

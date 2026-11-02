@@ -16,7 +16,7 @@ spoke. Cheap (pure Python, microseconds), no LLM, no extra dependency.
 import re
 from difflib import SequenceMatcher
 
-_WORD = re.compile(r"[a-z0-9']+")
+_WORD = re.compile(r"[a-z0-9'ऀ-ॿ]+")     # Latin + Devanagari (Hindi interviews)
 
 MIN_ECHO_WORDS = 4        # shorter transcripts are never called an echo ("okay", "yes sir")
 MIN_COVERAGE = 0.7        # share of the transcript that is one unbroken run of the interviewer's words

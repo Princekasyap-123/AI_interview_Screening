@@ -21,6 +21,10 @@ WARNING_LIMIT_OVERRIDES = {
     ProctoringFlag.FlagType.FACE_MISMATCH: 3,   # the 4th confirmed mismatch ends it
     ProctoringFlag.FlagType.PHONE_DETECTED: 3,  # the 4th confirmed phone sighting ends it
     ProctoringFlag.FlagType.ABUSIVE_LANGUAGE: 0,  # zero tolerance: the 1st one ends it
+    # Another person's voice while the candidate's own lips are still. The browser
+    # only reports it after several seconds of it, but it is still a heuristic
+    # (a TV next door, a family member in the corridor), so the 4th ends it.
+    ProctoringFlag.FlagType.BACKGROUND_VOICE: 3,
 }
 
 # These types show the candidate a notice and are logged for the
@@ -87,6 +91,7 @@ ALWAYS_COUNTABLE_TYPES = {
     ProctoringFlag.FlagType.READING_SUSPECTED,
     ProctoringFlag.FlagType.GAZE_AWAY,
     ProctoringFlag.FlagType.ABUSIVE_LANGUAGE,
+    ProctoringFlag.FlagType.BACKGROUND_VOICE,
 }
 
 DURATION_GATED_TYPES = {
@@ -110,6 +115,7 @@ SEVERITY_MAP = {
     ProctoringFlag.FlagType.NOTES_DETECTED: ProctoringFlag.Severity.MEDIUM,
     ProctoringFlag.FlagType.READING_SUSPECTED: ProctoringFlag.Severity.MEDIUM,
     ProctoringFlag.FlagType.ABUSIVE_LANGUAGE: ProctoringFlag.Severity.HIGH,
+    ProctoringFlag.FlagType.BACKGROUND_VOICE: ProctoringFlag.Severity.HIGH,
 }
 
 # Candidate-facing wording used in warnings and the termination message.
@@ -136,6 +142,10 @@ FLAG_REASONS = {
         "Please keep looking at the screen during the interview"
     ),
     ProctoringFlag.FlagType.ABUSIVE_LANGUAGE: "Abusive or offensive language was used",
+    ProctoringFlag.FlagType.BACKGROUND_VOICE: (
+        "Another person's voice was heard while you were not speaking. "
+        "You must be alone and answer on your own"
+    ),
 }
 
 

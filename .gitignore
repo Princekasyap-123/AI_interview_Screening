@@ -48,3 +48,4 @@ models/kokoro/*.onnx
 models/kokoro/*.bin
 frontend/static/models/**/*.onnx
 frontend/static/models/**/*.bin
+.claude/

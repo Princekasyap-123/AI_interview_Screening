@@ -3,7 +3,7 @@
 """
 HTTP endpoints for the AI interviewer's voice.
 
-  POST /api/avatar/tts/           {"session_id": "...", "text": "..."}  -> audio/wav
+  POST /api/avatar/tts/           {"session_id": "...", "text": "...", "lang": "en"|"hi"}  -> audio/wav
   GET  /api/avatar/tts/warmup/                                           -> 202 / 200
 
 Candidates are not logged-in Django users, so access is tied to a valid
@@ -40,6 +40,11 @@ def _rate_limited(session_id) -> bool:
         return False
 
 
+def _lang(payload) -> str:
+    """"hi" selects the Hindi voice; anything else is the normal English voice."""
+    return "hi" if str(payload.get("lang") or "").lower() == "hi" else "en"
+
+
 def _session_exists(session_id) -> bool:
     if not session_id:
         return False
@@ -68,7 +73,7 @@ def tts_view(request):
         return JsonResponse({"error": "too many requests"}, status=429)
 
     try:
-        audio = tts_engine.synthesize(text)
+        audio = tts_engine.synthesize(text, lang=_lang(payload))
     except TTSUnavailableError as exc:
         logger.warning("TTS unavailable, browser voice will be used: %s", exc)
         return JsonResponse({"error": "tts unavailable"}, status=503)
@@ -127,7 +132,7 @@ def lipsync_view(request):
         return JsonResponse({"error": "unknown interview session"}, status=403)
 
     try:
-        clip = lipsync_engine.render_text(text)
+        clip = lipsync_engine.render_text(text, lang=_lang(payload))
     except (LipsyncNotAvailableError, TTSUnavailableError) as exc:
         logger.warning("Lip-sync unavailable, page will use audio-only voice: %s", exc)
         return JsonResponse({"error": "lipsync unavailable"}, status=503)

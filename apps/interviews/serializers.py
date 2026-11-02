@@ -19,6 +19,11 @@ class InterviewSessionCreateSerializer(serializers.Serializer):
         required=False,
         default=InterviewSession.JobRoleType.WHITE_COLLAR,
     )
+    language_mode = serializers.ChoiceField(
+        choices=InterviewSession.LanguageMode.choices,
+        required=False,
+        default=InterviewSession.LanguageMode.ENGLISH,
+    )
     job_description_text = serializers.CharField(
         required=False, allow_blank=True, default=""
     )

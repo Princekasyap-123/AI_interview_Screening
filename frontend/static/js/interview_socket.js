@@ -38,6 +38,7 @@ class InterviewSocket {
       info: [],          // fn(message)
       error: [],         // fn(message)
       ack: [],           // fn({question_id})
+      language: [],      // fn("en" | "hi") — the interviewer switched language
       open: [],          // fn()
       close: [],         // fn(closeEvent)
       reconnecting: [],  // fn({ attempt, delayMs })
@@ -53,8 +54,8 @@ class InterviewSocket {
     this.pingTimer = null;
     this.pongTimer = null;
     // Close codes that must NOT be retried: 4000 candidate ended, 4001 interview
-    // terminated, 4403 bad token, 4404 unknown session.
-    this.finalCodes = new Set([4000, 4001, 4403, 4404]);
+    // terminated, 4403 bad token, 4404 unknown session, 4410 interview already over.
+    this.finalCodes = new Set([4000, 4001, 4403, 4404, 4410]);
   }
 
   // ------------------------------------------------------------------
@@ -241,6 +242,9 @@ class InterviewSocket {
         break;
       case "ack":
         this._emit("ack", data);
+        break;
+      case "language":
+        this._emit("language", data.language);
         break;
       case "pong":
         clearTimeout(this.pongTimer);

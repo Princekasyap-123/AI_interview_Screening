@@ -31,6 +31,10 @@ class ProctoringSession(models.Model):
 
     risk_score = models.FloatField(default=0.0)
 
+    # What the candidate's browser says its proctoring checks were doing (face tracking running? how many
+    # frames analysed? ...). Lets the recruiter tell "nothing was detected" from "nothing was being checked".
+    tracking_status = models.JSONField(default=dict, blank=True)
+
     # Snapshot captured client-side ~3s after the candidate's camera
     # starts, before questions begin. Used for two purposes:
     #   1. Recruiter-facing audit trail — "this is who showed up".
@@ -78,6 +82,7 @@ class ProctoringFlag(models.Model):
         NOTES_DETECTED = "notes_detected", "Notes or book visible"
         READING_SUSPECTED = "reading_suspected", "Possibly reading from outside the screen"
         ABUSIVE_LANGUAGE = "abusive_language", "Abusive or offensive language"
+        BACKGROUND_VOICE = "background_voice", "Another voice heard (possible prompting)"
         ATTIRE_CONCERN = "attire_concern", "Attire may not be formal (informational)"
 
     class Severity(models.TextChoices):

@@ -56,14 +56,26 @@
   const FLOOR_PERCENTILE = 0.15;
   const SPEECH_ABOVE_FLOOR_DB = 10;    // speech must be this much louder than the floor
   const MIN_SPEECH_DB = -55;           // ...and at least this loud
+  // Voice-band check: human speech keeps most of its energy between ~250 and 3400 Hz. Fans, AC,
+  // hum (mostly < 200 Hz), hiss and wind (spread over all frequencies) do not, so they are not
+  // "speech" however loud they get. Sound that is clearly louder than the room passes anyway.
+  const VOICE_BAND_HZ = [250, 3400];
+  const TOTAL_BAND_HZ = [60, 8000];
+  const MIN_VOICE_BAND_RATIO = 0.30;
+  const CLEARLY_LOUD_ABOVE_FLOOR_DB = 25;
+  // Another person's voice: voiced time while the candidate's lips are NOT moving builds up;
+  // at FOREIGN_VOICE_MS the "foreignVoice" event fires. Lip movement drains it quickly.
+  const FOREIGN_VOICE_MS = 3000;
+  const FOREIGN_DECAY_SILENT = 0.5;    // no voice: drains at half speed (pauses between words)
+  const FOREIGN_DECAY_LIPS = 3;        // candidate's lips moving: drains fast
   const NO_PAUSE_NOISE_MS = 20000;     // "speaking" 20 s without any pause = noise
   const PAUSE_GUARD_MS = 15000;        // an aside can never keep detection paused longer
   const DEFAULTS = {
     minSpeechMs: 500,             // speech needed before auto-submit can happen (short answers like "yes" count)
-    submitSilenceMs: 2200,        // silence after a LONG answer that ends it (a half-finished sentence is continued by the server)
-    shortSubmitSilenceMs: 1500,   // ...after a SHORT one (< shortAnswerMs of speech): usually done, not thinking
-    shortAnswerMs: 2500,
-    countdownFromMs: 1000,        // show the countdown after this much silence
+    submitSilenceMs: 2400,      // silence after a LONG answer that ends it (a half-finished sentence is continued by the server)
+    shortSubmitSilenceMs: 1600,   // ...after a SHORT one (< shortAnswerMs of speech): usually done, not thinking
+    shortAnswerMs: 3000,
+    countdownFromMs: 1400,        // show the countdown after this much silence
     initialSpeechMs: 0,           // speech already heard when the answer window opens (barge-in)
     bargeStartDelayMs: 1200,      // no barge-in during the first moments of the interviewer's voice
     bargeConfirmMs: 450,          // sustained speech needed to cut the interviewer off
@@ -149,6 +161,13 @@
       });
     }
 
+    /** Live microphone level in dB (works any time, also before the interview starts). */
+    currentLevelDb() {
+      if (!this.ctx || !this.analyser || !this.buf) return -120;
+      if (this.ctx.state === "suspended") this.ctx.resume().catch(() => {});
+      return this._levelDb();
+    }
+
     init(stream) {
       if (!stream || !stream.getAudioTracks || !stream.getAudioTracks().length) {
         console.warn("[InterviewAssist] no microphone track — assist disabled");
@@ -164,12 +183,46 @@
       this.avatarAnalyser = this.ctx.createAnalyser();   // separate: the avatar changes its settings
       src.connect(this.avatarAnalyser);
       this.buf = new Float32Array(this.analyser.fftSize);
+      this._src = src;                    // Silero starts later (startSilero), not while the page loads
+      this.freq = new Float32Array(this.analyser.frequencyBinCount);
       const resume = () => { if (this.ctx.state === "suspended") this.ctx.resume().catch(() => {}); };
       document.addEventListener("click", resume);
       document.addEventListener("keydown", resume);
       console.log("[InterviewAssist] ready");
       return true;
     }
+
+    /**
+     * Silero VAD (silero_vad.js): a neural voice detector that tells a human voice from music,
+     * TV soundtracks and noise. It loads in the background; until it is ready (or if it cannot
+     * load) the loudness + voice-band gate below is used, so nothing depends on it.
+     */
+    _startSilero(src) {
+      const urls = window.SILERO_URLS;
+      if (!urls || !window.SileroVAD) return;
+      try {
+        this.silero = new window.SileroVAD({ workerUrl: urls.worker, modelUrl: urls.model });
+        this.silero.start(this.ctx, src).catch(() => {});
+      } catch (err) {
+        console.warn("[InterviewAssist] Silero VAD not started:", err);
+        this.silero = null;
+      }
+    }
+
+    /** Starts the Silero voice detector (called a few seconds after the interview starts). */
+    startSilero() {
+      if (this.ctx && this._src && !this.silero) this._startSilero(this._src);
+    }
+
+    /** True when Silero is running; its verdict then replaces the voice-band guess. */
+    _sileroReady() { return !!(this.silero && this.silero.ready); }
+
+    /**
+     * Optional: fn() -> { reliable, moving } describing the candidate's lips
+     * (ProctoringClient.getMouthState). With it, a voice heard for several seconds
+     * while the candidate's lips are still is reported as "foreignVoice".
+     */
+    setMouthProbe(fn) { this.mouthProbe = typeof fn === "function" ? fn : null; }
 
     /**
      * overrides: per-answer settings, e.g. after a barge-in
@@ -196,6 +249,8 @@
       this.submitted = false;
       this.levels = this.levels || [];   // kept across answers: the floor is known from the start
       this.floorBoost = 0;
+      this.foreignMs = 0;                 // voiced time with the candidate's lips still (see FOREIGN_VOICE_MS)
+      this.peakDb = -120;                // loudest moment of this answer (sent to the server for diagnostics)
       this.lastQuietAt = now;
       this.lastDebugAt = 0;
       clearInterval(this.timer);
@@ -269,7 +324,7 @@
       const echo = sorted[Math.floor(sorted.length / 2)];
       const room = this._noiseFloor();
       const threshold = Math.max(room + this.cfg.bargeMarginDb, echo + this.cfg.bargeMarginDb, this.cfg.bargeMinDb);
-      const loud = db > threshold;
+      const loud = db > threshold && !(this._sileroReady() && this.silero.isNonSpeech());
 
       if (window.ASSIST_DEBUG && Math.round(now / 50) % 20 === 0) {
         console.log(`[InterviewAssist] barge: level ${db.toFixed(1)} dB, threshold ${threshold.toFixed(1)} dB, voice ${this.bargeVoiceMs} ms`);
@@ -307,16 +362,41 @@
       return 10 * Math.log10(s / this.buf.length + 1e-12);
     }
 
+    /** Share of the sound's energy that lies in the human voice band (0..1); 1 when unknown. */
+    _voiceBandRatio() {
+      if (!this.freq || !this.analyser.getFloatFrequencyData) return 1;
+      this.analyser.getFloatFrequencyData(this.freq);
+      const hzPerBin = this.ctx.sampleRate / this.analyser.fftSize;
+      let voice = 0;
+      let total = 0;
+      for (let i = 1; i < this.freq.length; i++) {
+        const hz = i * hzPerBin;
+        if (hz < TOTAL_BAND_HZ[0] || hz > TOTAL_BAND_HZ[1]) continue;
+        const p = Math.pow(10, this.freq[i] / 10);          // dB -> power (silent bins are -Infinity -> 0)
+        total += p;
+        if (hz >= VOICE_BAND_HZ[0] && hz <= VOICE_BAND_HZ[1]) voice += p;
+      }
+      return total > 0 ? voice / total : 0;
+    }
+
     _tick() {
       if (!this.active || this.submitted) return;
       const now = performance.now();
       if (this.paused) { this.lastVoiceAt = now; return; }
 
       const db = this._levelDb();
+      if (db > this.peakDb) this.peakDb = db;
       this.levels.push(db);
       if (this.levels.length > LEVEL_WINDOW) this.levels.shift();
       const floor = this._noiseFloor() + this.floorBoost;
       let loud = db > Math.max(floor + SPEECH_ABOVE_FLOOR_DB, MIN_SPEECH_DB);
+      // Background noise and music are not speech: it must be a human voice. Silero decides when it
+      // is running (it also rejects music); otherwise the voice-band check below is the fallback.
+      if (loud && this._sileroReady() && this.silero.isNonSpeech()) {
+        loud = false;                       // Silero is sure this is music / noise, not a voice
+      } else if (loud && !this._sileroReady() && db <= floor + CLEARLY_LOUD_ABOVE_FLOOR_DB && this._voiceBandRatio() < MIN_VOICE_BAND_RATIO) {
+        loud = false;
+      }
 
       // Constant sound with no pause at all for 20 s is noise, not speech:
       // lift the floor above it for the rest of this answer.
@@ -336,6 +416,7 @@
 
       this.voicedTicks = loud ? this.voicedTicks + 1 : 0;
       const speaking = this.voicedTicks >= 3;               // >= 150 ms of sound
+      this._checkForeignVoice(speaking, db);
       if (speaking) {
         this.speechMs += TICK_MS;
         // gaps between words (< the backchannel pause) don't break a speech stretch
@@ -379,6 +460,32 @@
     }
     }
 
+    /**
+     * Cheating check: a voice (not noise) is heard while the candidate's own lips are not
+     * moving => somebody else is talking, e.g. whispering the answer. Only judged while the
+     * candidate is answering (the interviewer is silent then), with exactly one face facing
+     * the screen; if the camera cannot tell (reliable=false) nothing is concluded.
+     */
+    _checkForeignVoice(speaking, db) {
+      if (!this.mouthProbe) return;
+      let mouth;
+      try { mouth = this.mouthProbe(); } catch (e) { mouth = null; }
+      if (!mouth || !mouth.reliable) return;                 // unknown: neither build up nor drain
+      if (speaking && !mouth.moving) {
+        this.foreignMs += TICK_MS;
+      } else if (mouth.moving) {
+        this.foreignMs = Math.max(0, this.foreignMs - TICK_MS * FOREIGN_DECAY_LIPS);
+      } else {
+        this.foreignMs = Math.max(0, this.foreignMs - TICK_MS * FOREIGN_DECAY_SILENT);
+      }
+      if (this.foreignMs >= FOREIGN_VOICE_MS) {
+        const info = { voiced_ms: Math.round(this.foreignMs), level_db: Math.round(db), answer_speech_ms: Math.round(this.speechMs) };
+        this.foreignMs = 0;
+        console.warn("[InterviewAssist] a voice was heard while the candidate's lips were still:", info);
+        this._emit("foreignVoice", info);
+      }
+    }
+
     _noiseFloor() {
       if (this.levels.length < 20) return -60;
       const sorted = this.levels.slice().sort((a, b) => a - b);
@@ -402,6 +509,12 @@
     // ---------------- spoken requests (Web Speech API) ----------------
 
     _startRecognition() {
+      // OFF by default. Chrome's speech recogniser opens a SECOND microphone capture next to the
+      // one that records the answer, and restarts it every few seconds: that is the repeating
+      // mute/unmute sound, and it can starve the main recording (empty transcripts). The server
+      // already does everything it was used for (abuse check, "repeat", intent) on the real
+      // transcript. Opt in for experiments with: window.ASSIST_SPEECH_RECOGNITION = true
+      if (!window.ASSIST_SPEECH_RECOGNITION) return;
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SR) return;
       this.recWanted = true;

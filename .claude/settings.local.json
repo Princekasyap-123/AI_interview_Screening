@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./**/.env)",
+      "Read(./**/local_settings.py)",
+      "Read(./secrets/**)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.key)",
+      "Read(./**/firebase*.json)",
+      "Bash(cat .env*)",
+      "Bash(printenv*)",
+      "Bash(env)"
+    ]
+  }
+}

@@ -3,9 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
 <title>Recruiter Dashboard — White Force</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script>
   /* Apply saved theme before paint to avoid a flash */
   (function () {
@@ -22,190 +24,204 @@
   /* ============ THEME TOKENS ============ */
   :root,
   :root[data-theme="light"] {
-    --bg: #E3E7ED;
+    --bg: #F4F5F9;
+    --bg-grad: radial-gradient(1100px 520px at 100% -10%, rgba(99,102,241,0.08) 0%, rgba(99,102,241,0) 60%), radial-gradient(900px 500px at -5% 100%, rgba(236,72,153,0.06) 0%, rgba(236,72,153,0) 55%);
     --panel: #FFFFFF;
-    --panel-hover: #F4F5F8;
-    --panel-alt: #F8F9FB;
-    --text: #1C2033;
-    --text-dim: #596882;
-    --text-faint: #8392A5;
-    --accent: #5B2BD6;
-    --accent-bright: #6610F2;
-    --accent-soft: rgba(102, 16, 242, 0.08);
+    --panel-hover: #F6F7FB;
+    --panel-alt: #F9FAFC;
+    --text: #141A2E;
+    --text-dim: #565F75;
+    --text-faint: #8A92A6;
+    --accent: #4338CA;
+    --accent-bright: #4F46E5;
+    --accent-2: #7C3AED;
+    --accent-grad: linear-gradient(135deg, #4F46E5, #7C3AED);
+    --accent-soft: rgba(79, 70, 229, 0.08);
     --accent-text: #FFFFFF;
-    --warn: #DC3545;
-    --warn-bg: #FDECEE;
-    --warn-text: #B02A37;
-    --ok: #10B759;
-    --amber: #B8860B;
-    --border: #E3E7ED;
+    --border: #E5E8F0;
     --input-bg: #FFFFFF;
-    --shadow: 0 1px 2px rgba(28, 32, 51, 0.04);
+    --shadow: 0 1px 2px rgba(20, 26, 46, 0.05), 0 1px 3px rgba(20, 26, 46, 0.04);
+    --shadow-md: 0 4px 14px rgba(24, 28, 50, 0.07), 0 1px 3px rgba(24, 28, 50, 0.05);
+    --shadow-lg: 0 16px 36px rgba(24, 28, 50, 0.12), 0 4px 10px rgba(24, 28, 50, 0.06);
+    --glow-accent: 0 8px 22px rgba(79, 70, 229, 0.28);
 
-    --sidebar-bg: #3B0BA0;
-    --sidebar-bg-deep: #2F0883;
-    --sidebar-text: #C9BDF0;
+    --ok: #0F9D58;      --ok-bg: #E6F6EE;
+    --warn: #D92D20;    --warn-bg: #FDECEA;
+    --amber: #B54708;   --amber-bg: #FEF1E0;
+    --info: #1D5FD8;    --info-bg: #E8F0FD;
+    --muted-bg: #EEF0F5;
+
+    --sidebar-bg: #111729;
+    --sidebar-bg-grad: linear-gradient(185deg, #141B30 0%, #0D1222 100%);
+    --sidebar-text: #9AA3BC;
     --sidebar-text-strong: #FFFFFF;
-    --sidebar-active: #5A18D8;
-    --sidebar-line: rgba(255, 255, 255, 0.12);
-
-    --c-purple: #6F42C1;
-    --c-blue: #0D6EFD;
-    --c-pink: #F10075;
-    --c-teal: #00CCCC;
+    --sidebar-active: rgba(99, 102, 241, 0.22);
+    --sidebar-line: rgba(255, 255, 255, 0.08);
   }
 
   :root[data-theme="dark"] {
-    --bg: #14161A;
-    --panel: #1B1E24;
-    --panel-hover: #22252C;
-    --panel-alt: #181B20;
-    --text: #F5F3EF;
-    --text-dim: #8A8F98;
-    --text-faint: #5C6068;
-    --accent: #3B5F52;
-    --accent-bright: #7B4DFF;
-    --accent-soft: rgba(123, 77, 255, 0.12);
-    --accent-text: #FFFFFF;
-    --warn: #C9432B;
-    --warn-bg: #2A1815;
-    --warn-text: #E48B7A;
-    --ok: #5B8A76;
-    --amber: #D9B85B;
-    --border: #2A2D34;
-    --input-bg: #1B1E24;
-    --shadow: none;
+    --bg: #0E1119;
+    --bg-grad: radial-gradient(1100px 520px at 100% -10%, rgba(99,102,241,0.14) 0%, rgba(99,102,241,0) 60%), radial-gradient(900px 500px at -5% 100%, rgba(236,72,153,0.08) 0%, rgba(236,72,153,0) 55%);
+    --panel: #161A24;
+    --panel-hover: #1C212D;
+    --panel-alt: #12151E;
+    --text: #EEF0F6;
+    --text-dim: #A0A8BD;
+    --text-faint: #6C748A;
+    --accent: #6366F1;
+    --accent-bright: #818CF8;
+    --accent-2: #A78BFA;
+    --accent-grad: linear-gradient(135deg, #818CF8, #A78BFA);
+    --accent-soft: rgba(129, 140, 248, 0.13);
+    --accent-text: #0E1119;
+    --border: #252B3A;
+    --input-bg: #12151E;
+    --shadow: 0 1px 2px rgba(0,0,0,0.4);
+    --shadow-md: 0 6px 18px rgba(0,0,0,0.38), 0 1px 3px rgba(0,0,0,0.3);
+    --shadow-lg: 0 20px 44px rgba(0,0,0,0.5), 0 4px 12px rgba(0,0,0,0.35);
+    --glow-accent: 0 8px 26px rgba(129, 140, 248, 0.35);
 
-    --sidebar-bg: #230A5E;
-    --sidebar-bg-deep: #1A0847;
-    --sidebar-text: #A99AD6;
+    --ok: #4ADE80;      --ok-bg: rgba(74, 222, 128, 0.12);
+    --warn: #F87171;    --warn-bg: rgba(248, 113, 113, 0.12);
+    --amber: #FBBF24;   --amber-bg: rgba(251, 191, 36, 0.12);
+    --info: #60A5FA;    --info-bg: rgba(96, 165, 250, 0.12);
+    --muted-bg: #1F2432;
+
+    --sidebar-bg: #0A0D16;
+    --sidebar-bg-grad: linear-gradient(185deg, #0D1220 0%, #060810 100%);
+    --sidebar-text: #8D96AE;
     --sidebar-text-strong: #FFFFFF;
-    --sidebar-active: #4B1CB5;
-    --sidebar-line: rgba(255, 255, 255, 0.09);
+    --sidebar-active: rgba(129, 140, 248, 0.18);
+    --sidebar-line: rgba(255, 255, 255, 0.06);
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
-
   html { scroll-behavior: smooth; }
 
   body {
-    background: var(--bg);
+    background: var(--bg-grad), var(--bg);
+    background-attachment: fixed;
     color: var(--text);
-    font-family: 'Roboto', -apple-system, 'Segoe UI', sans-serif;
+    font-family: 'Inter', -apple-system, 'Segoe UI', Roboto, sans-serif;
     min-height: 100vh;
     font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
     transition: background 0.2s ease, color 0.2s ease;
   }
-
   a { color: inherit; text-decoration: none; }
+  button { font-family: inherit; }
+  :focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 2px; }
 
   /* ============ APP SHELL ============ */
   .app { display: flex; min-height: 100vh; }
 
   /* ---------- Sidebar ---------- */
   .sidebar {
-    width: 240px;
+    width: 250px;
     flex-shrink: 0;
-    background: var(--sidebar-bg);
+    background: var(--sidebar-bg-grad);
     color: var(--sidebar-text);
     position: sticky;
     top: 0;
     height: 100vh;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
     transition: margin-left 0.25s ease;
     z-index: 50;
+    box-shadow: 1px 0 0 var(--sidebar-line);
   }
-  body.sidebar-hidden .sidebar { margin-left: -240px; }
+  body.sidebar-hidden .sidebar { margin-left: -250px; }
 
   .sidebar-brand {
-    padding: 22px 20px 18px;
-    font-size: 26px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 22px 22px 20px;
+    font-size: 18px;
     font-weight: 700;
     color: var(--sidebar-text-strong);
-    letter-spacing: -0.5px;
+    letter-spacing: -0.2px;
   }
-  .sidebar-brand span { color: #B79BFF; }
+  .brand-mark {
+    width: 32px; height: 32px;
+    border-radius: 9px;
+    background: linear-gradient(135deg, #6366F1, #8B5CF6);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 800; color: #fff;
+    box-shadow: 0 6px 16px rgba(99, 102, 241, 0.45);
+  }
+  .sidebar-brand span { color: #A5B4FC; }
 
-  .sidebar-user {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 6px 20px 22px;
-  }
-  .avatar {
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, #8A5BFF, #F10075);
-    color: #fff;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 700;
-    font-size: 14px;
-    position: relative;
-    flex-shrink: 0;
-  }
-  .avatar::after {
-    content: '';
-    position: absolute;
-    right: -1px;
-    bottom: -1px;
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: #10B759;
-    border: 2px solid var(--sidebar-bg);
-  }
-  .sidebar-user-name { font-weight: 700; color: var(--sidebar-text-strong); font-size: 14px; }
-  .sidebar-user-role { font-size: 12.5px; margin-top: 2px; }
-
+  .sidebar-nav { flex: 1; overflow-y: auto; padding: 4px 12px 12px; }
   .sidebar-label {
-    font-size: 10.5px;
+    font-size: 11px;
+    font-weight: 700;
     letter-spacing: 0.8px;
     text-transform: uppercase;
-    padding: 0 20px 10px;
+    padding: 14px 10px 8px;
     color: var(--sidebar-text);
-    opacity: 0.8;
+    opacity: 0.65;
   }
-
   .nav-item {
     display: flex;
     align-items: center;
-    gap: 14px;
-    padding: 11px 20px;
-    font-size: 14.5px;
+    gap: 12px;
+    padding: 9px 10px;
+    margin-bottom: 2px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
     color: var(--sidebar-text);
     cursor: pointer;
-    background: none;
-    border: none;
-    width: 100%;
-    text-align: left;
-    font-family: inherit;
+    border: 1px solid transparent;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
   }
-  .nav-item svg { width: 20px; height: 20px; flex-shrink: 0; }
-  .nav-item:hover { color: var(--sidebar-text-strong); }
+  .nav-item svg { width: 18px; height: 18px; flex-shrink: 0; }
+  .nav-item:hover { color: var(--sidebar-text-strong); background: rgba(255,255,255,0.05); }
   .nav-item.active {
     background: var(--sidebar-active);
     color: var(--sidebar-text-strong);
-    font-weight: 500;
+    border-color: rgba(129, 140, 248, 0.35);
+    box-shadow: inset 2px 0 0 var(--accent-bright);
+  }
+  .nav-count {
+    margin-left: auto;
+    font-size: 11.5px;
+    font-weight: 700;
+    padding: 1px 8px;
+    border-radius: 99px;
+    background: rgba(255,255,255,0.08);
+    font-variant-numeric: tabular-nums;
   }
 
-  .nav-sub {
-    background: var(--sidebar-bg-deep);
-    padding: 6px 0;
+  .sidebar-foot {
+    border-top: 1px solid var(--sidebar-line);
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
   }
-  .nav-sub a {
-    display: block;
-    margin: 0 20px 0 30px;
-    padding: 9px 0 9px 20px;
-    font-size: 13.5px;
-    color: var(--sidebar-text);
-    border-bottom: 1px solid var(--sidebar-line);
+  .avatar {
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #6366F1, #EC4899);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 14px;
+    flex-shrink: 0;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
   }
-  .nav-sub a:last-child { border-bottom: none; }
-  .nav-sub a:hover { color: var(--sidebar-text-strong); }
-  .nav-sub a.active { color: var(--sidebar-text-strong); font-weight: 500; }
+  .sidebar-user-name { font-weight: 600; color: var(--sidebar-text-strong); font-size: 13.5px; line-height: 1.2; }
+  .sidebar-user-role { font-size: 12px; }
+  .signout-form { margin-left: auto; }
+  .signout-btn {
+    background: none; border: none; cursor: pointer; color: var(--sidebar-text);
+    padding: 6px; border-radius: 6px; display: flex;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .signout-btn:hover { color: #fff; background: rgba(255,255,255,0.08); }
+  .signout-btn svg { width: 18px; height: 18px; }
 
   /* ---------- Main column ---------- */
   .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -213,637 +229,480 @@
   .topbar {
     display: flex;
     align-items: center;
-    gap: 22px;
-    padding: 12px 24px;
+    gap: 14px;
+    padding: 12px 28px;
     background: var(--panel);
     border-bottom: 1px solid var(--border);
     position: sticky;
     top: 0;
     z-index: 40;
+    backdrop-filter: saturate(1.4) blur(6px);
   }
   .icon-btn {
-    background: none;
-    border: none;
-    color: var(--text);
-    cursor: pointer;
-    padding: 6px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 4px;
+    background: none; border: none; color: var(--text-dim); cursor: pointer;
+    padding: 8px; display: flex; align-items: center; justify-content: center;
+    border-radius: 8px;
+    transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
   }
-  .icon-btn:hover { background: var(--panel-hover); }
-  .icon-btn svg { width: 22px; height: 22px; }
+  .icon-btn:hover { background: var(--panel-hover); color: var(--text); }
+  .icon-btn:active { transform: scale(0.92); }
+  .icon-btn svg { width: 20px; height: 20px; }
 
-  .search-box { flex: 1; position: relative; }
+  .search-box { flex: 1; max-width: 480px; position: relative; }
   .search-box input {
     width: 100%;
-    background: var(--input-bg);
+    background: var(--panel-alt);
     color: var(--text);
-    border: 2px solid var(--border);
-    padding: 10px 40px 10px 14px;
-    border-radius: 2px;
+    border: 1px solid var(--border);
+    padding: 9px 14px 9px 38px;
+    border-radius: 9px;
     font-family: inherit;
     font-size: 13.5px;
     outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
   }
-  .search-box input:focus { border-color: var(--accent-bright); }
+  .search-box input:focus { border-color: var(--accent-bright); background: var(--input-bg); box-shadow: 0 0 0 3px var(--accent-soft); }
   .search-box svg {
-    position: absolute;
-    right: 12px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 18px;
-    height: 18px;
-    color: var(--text-faint);
-    pointer-events: none;
+    position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+    width: 16px; height: 16px; color: var(--text-faint); pointer-events: none;
   }
+  .topbar-date { margin-left: auto; font-size: 13px; color: var(--text-dim); white-space: nowrap; }
 
   .theme-toggle .sun { display: none; }
   :root[data-theme="dark"] .theme-toggle .sun { display: block; }
   :root[data-theme="dark"] .theme-toggle .moon { display: none; }
 
-  /* ---------- Page heading ---------- */
-  .page-head {
-    background: var(--panel);
-    padding: 22px 24px 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .page-head-top {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 20px;
-    flex-wrap: wrap;
-  }
-  .page-title { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
-  .page-sub { color: var(--text-dim); font-size: 13.5px; margin-top: 6px; }
+  /* ---------- Content ---------- */
+  .content { padding: 28px; display: flex; flex-direction: column; gap: 24px; max-width: 1600px; width: 100%; margin: 0 auto; }
 
-  .date-box { display: flex; align-items: center; gap: 12px; }
-  .date-part { display: flex; align-items: center; gap: 6px; }
-  .date-part .big { font-size: 38px; font-weight: 300; line-height: 1; letter-spacing: -1px; }
-  .date-part .small { font-size: 11.5px; line-height: 1.25; color: var(--text-dim); }
-  .date-part .small strong { display: block; color: var(--text); font-weight: 700; text-transform: uppercase; }
+  .page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+  .page-title {
+    font-size: 23px; font-weight: 800; letter-spacing: -0.4px;
+    background: var(--accent-grad); -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .page-sub { color: var(--text-dim); font-size: 13.5px; margin-top: 3px; }
 
-  /* Filter tabs (status filter links — same Django logic as before) */
-  .filter-bar {
-    display: flex;
-    gap: 26px;
-    margin-top: 22px;
-    flex-wrap: wrap;
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--accent-grad); color: var(--accent-text);
+    border: 1px solid transparent; padding: 10px 17px; border-radius: 9px;
+    font-weight: 600; font-size: 13.5px; cursor: pointer; white-space: nowrap;
+    box-shadow: var(--glow-accent);
+    transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
   }
-  .filter-chip {
-    padding: 10px 0 12px;
-    font-size: 13.5px;
-    color: var(--text-dim);
-    border-bottom: 2px solid transparent;
-    font-weight: 500;
-  }
-  .filter-chip:hover:not(.active) { color: var(--text); }
-  .filter-chip.active {
-    color: var(--accent-bright);
-    border-bottom-color: var(--accent-bright);
-  }
+  .btn:hover { filter: brightness(1.07); transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
+  .btn:disabled { opacity: 0.6; cursor: default; box-shadow: none; transform: none; }
+  .btn-ghost { background: var(--panel); color: var(--text); border-color: var(--border); box-shadow: none; }
+  .btn-ghost:hover { background: var(--panel-hover); border-color: var(--text-faint); filter: none; transform: none; }
+  .btn svg { width: 16px; height: 16px; }
 
-  /* ---------- Content area ---------- */
-  .content { padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+  /* Flash messages */
+  .flash-list { display: flex; flex-direction: column; gap: 8px; }
+  .flash { padding: 11px 14px; border-radius: 9px; font-size: 13.5px; border: 1px solid var(--border); background: var(--info-bg); color: var(--info); }
+  .flash.success { background: var(--ok-bg); color: var(--ok); }
+  .flash.error { background: var(--warn-bg); color: var(--warn); }
 
   /* ---------- Stat cards ---------- */
-  .stat-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 20px;
-  }
+  .stat-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
   .stat-card {
+    position: relative;
     background: var(--panel);
-    border-radius: 2px;
-    padding: 20px 20px 0;
-    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 17px 18px;
+    box-shadow: var(--shadow-md);
     overflow: hidden;
-    min-height: 120px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
   }
-  .stat-top { display: flex; align-items: center; gap: 16px; }
-  .stat-icon {
-    width: 45px;
-    height: 45px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #fff;
-    flex-shrink: 0;
+  .stat-card::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: var(--accent-grad); opacity: 0.9;
   }
-  .stat-icon svg { width: 22px; height: 22px; }
-  .stat-icon.purple { background: var(--c-purple); }
-  .stat-icon.blue { background: var(--c-blue); }
-  .stat-icon.pink { background: var(--c-pink); }
-  .stat-icon.teal { background: var(--c-teal); }
-  .stat-num { font-size: 28px; font-weight: 500; line-height: 1.1; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
-  .stat-label { font-size: 13.5px; color: var(--text-dim); margin-top: 2px; }
-  .spark { width: calc(100% + 40px); margin: 6px -20px 0; height: 34px; display: block; }
-  .spark.purple { color: var(--c-purple); }
-  .spark.blue { color: var(--c-blue); }
-  .spark.pink { color: var(--c-pink); }
-  .spark.teal { color: var(--c-teal); }
+  .stat-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); }
+  .stat-head { display: flex; align-items: center; justify-content: space-between; color: var(--text-dim); font-size: 13px; font-weight: 500; }
+  .stat-icon { width: 32px; height: 32px; border-radius: 9px; display: flex; align-items: center; justify-content: center; }
+  .stat-icon svg { width: 16px; height: 16px; }
+  .stat-icon.indigo { background: var(--accent-soft); color: var(--accent-bright); }
+  .stat-icon.green  { background: var(--ok-bg); color: var(--ok); }
+  .stat-icon.amber  { background: var(--amber-bg); color: var(--amber); }
+  .stat-icon.red    { background: var(--warn-bg); color: var(--warn); }
+  .stat-icon.blue   { background: var(--info-bg); color: var(--info); }
+  .stat-num { font-size: 29px; font-weight: 800; letter-spacing: -0.7px; margin-top: 11px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .stat-note { font-size: 12px; color: var(--text-faint); margin-top: 4px; }
 
   /* ---------- Cards ---------- */
-  .card {
-    background: var(--panel);
-    border-radius: 2px;
-    box-shadow: var(--shadow);
-  }
-  .card-head {
-    padding: 18px 20px 4px;
-  }
-  .card-title { font-size: 14.5px; font-weight: 700; }
-  .card-desc { font-size: 13.5px; color: var(--text-dim); margin-top: 6px; line-height: 1.45; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-md); }
+  .card-head { padding: 18px 20px 4px; }
+  .card-title { font-size: 15px; font-weight: 700; }
+  .card-desc { font-size: 13px; color: var(--text-dim); margin-top: 3px; line-height: 1.45; }
 
-  .forms-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 20px;
-    align-items: start;
-  }
+  .forms-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
 
-  /* ---------- Create session form ---------- */
-  .create-session { padding: 14px 20px 20px; }
+  /* ---------- Forms ---------- */
+  .create-session, .add-candidate { padding: 14px 20px 20px; }
+  .create-session form { display: grid; grid-template-columns: 1fr 1fr 140px; gap: 10px; align-items: start; }
 
-  .create-session form {
-    display: flex;
-    gap: 10px;
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-
-  .create-session select,
-  .create-session textarea,
-  .create-session input[type="number"] {
+  .create-session select, .create-session textarea, .create-session input[type="number"],
+  .add-candidate-form input[type="text"], .add-candidate-form input[type="email"], .add-candidate-form input[type="tel"] {
     background: var(--input-bg);
     color: var(--text);
     border: 1px solid var(--border);
-    padding: 9px 10px;
-    border-radius: 3px;
+    padding: 9px 11px;
+    border-radius: 9px;
     font-family: inherit;
-    font-size: 13px;
+    font-size: 13.5px;
     outline: none;
-  }
-  .create-session select:focus,
-  .create-session textarea:focus,
-  .create-session input[type="number"]:focus { border-color: var(--accent-bright); }
-
-  .create-session select { min-width: 180px; flex: 1; }
-  .create-session textarea { flex: 1 1 100%; min-width: 200px; resize: vertical; }
-  .create-session input[type="number"] { width: 70px; }
-
-  .create-session button {
-    background: var(--accent-bright);
-    color: var(--accent-text);
-    border: none;
-    padding: 9px 18px;
-    border-radius: 3px;
-    font-weight: 500;
-    font-size: 13px;
-    cursor: pointer;
-    font-family: inherit;
-  }
-  .create-session button:hover { background: var(--accent); }
-  .create-session button:disabled { opacity: 0.6; cursor: default; }
-
-  #createSessionError {
-    color: var(--warn);
-    font-size: 12.5px;
-    margin-top: 8px;
-    display: none;
-  }
-
-  /* ---------- Add candidate ---------- */
-  .add-candidate { padding: 14px 20px 20px; }
-
-  .add-candidate-toggle {
-    background: none;
-    border: 1px solid var(--border);
-    color: var(--text-dim);
-    padding: 7px 14px;
-    border-radius: 3px;
-    font-size: 12.5px;
-    cursor: pointer;
-    font-family: inherit;
-  }
-  .add-candidate-toggle:hover { border-color: var(--accent-bright); color: var(--accent-bright); }
-
-  .add-candidate-form {
-    display: none;
-    gap: 10px;
-    align-items: flex-start;
-    flex-wrap: wrap;
-    margin-top: 12px;
-  }
-  .add-candidate-form.show { display: flex; }
-
-  .add-candidate-form input[type="text"],
-  .add-candidate-form input[type="email"],
-  .add-candidate-form input[type="tel"] {
-    background: var(--input-bg);
-    color: var(--text);
-    border: 1px solid var(--border);
-    padding: 9px 10px;
-    border-radius: 3px;
-    font-family: inherit;
-    font-size: 13px;
-    min-width: 160px;
-    flex: 1;
-    outline: none;
-  }
-  .add-candidate-form input:focus { border-color: var(--accent-bright); }
-
-  .add-candidate-form input[type="file"] {
-    color: var(--text-dim);
-    font-size: 12.5px;
-    max-width: 220px;
-  }
-
-  .add-candidate-form button {
-    background: var(--accent-bright);
-    color: var(--accent-text);
-    border: none;
-    padding: 9px 18px;
-    border-radius: 3px;
-    font-weight: 500;
-    font-size: 13px;
-    cursor: pointer;
-    font-family: inherit;
-  }
-  .add-candidate-form button:hover { background: var(--accent); }
-  .add-candidate-form button:disabled { opacity: 0.6; cursor: default; }
-
-  #addCandidateError {
-    color: var(--warn);
-    font-size: 12.5px;
-    margin-top: 8px;
-    display: none;
     width: 100%;
+    min-width: 0;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
   }
+  .create-session select:focus, .create-session textarea:focus, .create-session input[type="number"]:focus,
+  .add-candidate-form input:focus { border-color: var(--accent-bright); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .create-session textarea { grid-column: 1 / -1; resize: vertical; min-height: 84px; }
+  .create-session button[type="submit"] { grid-column: 1 / -1; justify-content: center; }
+
+  /* Labeled "number of questions" field — a visible label above the
+     input so it reads as "No. of Questions: 5", never a bare digit. */
+  .qty-field { display: flex; flex-direction: column; gap: 5px; }
+  .qty-label {
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.5px; color: var(--text-faint); padding-left: 2px;
+  }
+  .qty-field input[type="number"] { font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; }
+
+  .field-hint { grid-column: 1 / -1; font-size: 12px; color: var(--text-faint); margin-top: -4px; }
+  #createSessionError, #addCandidateError {
+    color: var(--warn); background: var(--warn-bg);
+    font-size: 13px; margin-top: 10px; padding: 9px 12px; border-radius: 9px;
+    display: none; grid-column: 1 / -1;
+  }
+
+  .add-candidate-form { display: none; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+  .add-candidate-form.show { display: grid; }
+  .add-candidate-form input[type="file"] { grid-column: 1 / -1; color: var(--text-dim); font-size: 13px; }
+  .add-candidate-form button { grid-column: 1 / -1; justify-content: center; }
 
   /* ---------- Layout: list + detail ---------- */
-  .layout {
-    display: grid;
-    grid-template-columns: 360px 1fr;
-    gap: 20px;
-    align-items: start;
+  .layout { display: grid; grid-template-columns: 380px 1fr; gap: 20px; align-items: start; }
+
+  /* ---------- Filter tabs ---------- */
+  .filter-bar { display: flex; gap: 6px; padding: 14px 20px 0; flex-wrap: wrap; }
+  .filter-chip {
+    padding: 5px 12px; border-radius: 99px; font-size: 12.5px; font-weight: 500;
+    color: var(--text-dim); border: 1px solid var(--border); background: var(--panel);
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
   }
+  .filter-chip:hover:not(.active) { background: var(--panel-hover); color: var(--text); }
+  .filter-chip.active { background: var(--accent-grad); border-color: transparent; color: var(--accent-text); box-shadow: var(--glow-accent); }
 
   /* ---------- Session list ---------- */
-  .session-list-card { overflow: hidden; }
-  .session-list {
-    overflow-y: auto;
-    max-height: 760px;
-    margin-top: 12px;
-    border-top: 1px solid var(--border);
-  }
+  .session-list-card { overflow: hidden; position: sticky; top: 76px; }
+  .session-list { overflow-y: auto; max-height: calc(100vh - 260px); min-height: 120px; margin-top: 14px; border-top: 1px solid var(--border); }
 
-  .session-row {
-    display: block;
-    padding: 14px 20px;
-    border-bottom: 1px solid var(--border);
-  }
+  .session-row { display: flex; gap: 12px; padding: 13px 20px; border-bottom: 1px solid var(--border); border-left: 3px solid transparent; }
+  .session-row:last-of-type { border-bottom: none; }
   .session-row:hover { background: var(--panel-hover); }
-  .session-row.selected {
-    background: var(--accent-soft);
-    border-left: 3px solid var(--accent-bright);
-    padding-left: 17px;
+  .session-row.selected { background: var(--accent-soft); border-left-color: var(--accent-bright); }
+  .session-avatar {
+    width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+    background: var(--muted-bg); color: var(--text-dim);
+    display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 13px;
   }
-
-  .session-row-top {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    margin-bottom: 4px;
-  }
-
-  .session-name { font-weight: 500; font-size: 14px; }
-
+  .session-body { flex: 1; min-width: 0; }
+  .session-row-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .session-name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .session-score {
-    font-size: 14px;
-    font-variant-numeric: tabular-nums;
-    color: var(--text-dim);
-    font-weight: 500;
+    font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+    padding: 1px 8px; border-radius: 99px; background: var(--muted-bg); color: var(--text-dim);
   }
-  .session-score.high { color: var(--ok); }
-  .session-score.low { color: var(--warn); }
+  .session-score.high { background: var(--ok-bg); color: var(--ok); }
+  .session-score.mid  { background: var(--amber-bg); color: var(--amber); }
+  .session-score.low  { background: var(--warn-bg); color: var(--warn); }
+  .session-sub { font-size: 12px; color: var(--text-faint); margin: 1px 0 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .session-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--text-faint); }
 
-  .session-meta {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    color: var(--text-faint);
+  /* Pills */
+  .status-pill, .role-pill, .sev-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 9px; border-radius: 99px; font-size: 11.5px; font-weight: 500;
+    background: var(--muted-bg); color: var(--text-dim); white-space: nowrap;
   }
-
-  .status-pill {
-    padding: 2px 8px;
-    border-radius: 3px;
-    font-size: 11px;
-    border: 1px solid var(--border);
+  .status-pill::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .status-pill.completed { background: var(--ok-bg); color: var(--ok); }
+  .status-pill.terminated { background: var(--warn-bg); color: var(--warn); }
+  .status-pill.in_progress { background: var(--amber-bg); color: var(--amber); }
+  .status-pill.pending { background: var(--muted-bg); color: var(--text-dim); }
+  .status-pill.rescheduled { background: var(--info-bg); color: var(--info); }
+  .resched-banner {
+    display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap;
+    margin: 0 0 24px; padding: 16px 18px; border-radius: 14px;
+    background: var(--info-bg); color: var(--text); border: 1px solid var(--info);
+    box-shadow: var(--shadow-md);
   }
-  .status-pill.completed { color: var(--ok); border-color: rgba(16,183,89,0.4); }
-  .status-pill.terminated { color: var(--warn); border-color: rgba(220,53,69,0.4); }
-  .status-pill.in_progress { color: var(--amber); border-color: rgba(217,184,91,0.5); }
-  .status-pill.pending { color: var(--text-faint); }
+  .resched-banner .rb-icon { width: 38px; height: 38px; border-radius: 10px; background: var(--info); color: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .resched-banner .rb-icon svg { width: 20px; height: 20px; }
+  .resched-banner .rb-body { flex: 1; min-width: 220px; }
+  .resched-banner .rb-title { font-size: 15px; font-weight: 800; color: var(--info); }
+  .resched-banner .rb-slot { font-size: 20px; font-weight: 800; letter-spacing: -0.3px; margin: 4px 0 2px; }
+  .resched-banner .rb-note { font-size: 13px; color: var(--text-dim); }
+  .resched-banner .btn { align-self: center; }
+  .sc-resched { font-size: 12px; font-weight: 600; color: var(--info); }
+  .role-pill.white_collar { background: var(--info-bg); color: var(--info); }
+  .role-pill.blue_collar { background: var(--amber-bg); color: var(--amber); }
+  .sev-pill.high { background: var(--warn-bg); color: var(--warn); }
+  .sev-pill.medium { background: var(--amber-bg); color: var(--amber); }
+  .risk-flag { color: var(--warn); font-weight: 500; }
 
-  /* Candidate resume-parsing status (reuses .status-pill base look) */
-  .status-pill.parsed { color: var(--ok); border-color: rgba(16,183,89,0.4); }
-  .status-pill.failed { color: var(--warn); border-color: rgba(220,53,69,0.4); }
+  .empty-list { padding: 40px 24px; color: var(--text-faint); font-size: 13.5px; text-align: center; }
 
-  /* Blue-collar / white-collar role pill — same visual language as
-     .status-pill, new color-only variant (no new layout rules). */
-  .role-pill {
-    padding: 2px 8px;
-    border-radius: 3px;
-    font-size: 11px;
-    border: 1px solid var(--border);
-    color: var(--text-dim);
+
+  /* ---------- Session cards ---------- */
+  .cards-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+  .cards-head .filter-bar { padding: 0; }
+  .session-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 16px; }
+  .session-card {
+    display: flex; flex-direction: column; gap: 14px; padding: 16px 18px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-md);
+    transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
   }
-  .role-pill.white_collar { color: var(--c-blue); border-color: rgba(13,110,253,0.35); }
-  .role-pill.blue_collar { color: var(--amber); border-color: rgba(184,134,11,0.4); }
-
-  .risk-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--text-faint);
-  }
-  .risk-dot.flagged { background: var(--warn); }
-
-  .empty-list {
-    padding: 40px 24px;
-    color: var(--text-faint);
-    font-size: 13px;
-    text-align: center;
-  }
+  .session-card:hover { border-color: var(--accent-bright); transform: translateY(-3px); box-shadow: var(--shadow-lg); }
+  .sc-top { display: flex; justify-content: space-between; align-items: center; }
+  .sc-serial { font-size: 12px; font-weight: 700; letter-spacing: .4px; color: var(--accent-bright); background: var(--accent-soft); padding: 2px 10px; border-radius: 99px; font-variant-numeric: tabular-nums; }
+  .sc-who { display: flex; align-items: center; gap: 12px; }
+  .sc-id { flex: 1; min-width: 0; }
+  .sc-progress-label { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
+  .sc-progress-label strong { color: var(--text); font-variant-numeric: tabular-nums; }
+  .sc-progress .bar { height: 6px; background: var(--muted-bg); border-radius: 99px; overflow: hidden; }
+  .sc-progress .bar i { display: block; height: 100%; background: var(--accent-grad); border-radius: 99px; }
+  .sc-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12px; }
+  .sc-date { margin-left: auto; color: var(--text-faint); }
+  .back-btn { margin-bottom: 14px; }
+  .detail-serial { font-size: 12px; font-weight: 700; color: var(--accent-bright); letter-spacing: .4px; }
 
   /* ---------- Detail panel ---------- */
-  .detail {
-    padding: 28px 32px 32px;
-    min-width: 0;
-  }
-
-  .detail-empty {
-    padding: 80px 40px;
-    text-align: center;
-    color: var(--text-faint);
-    font-size: 13.5px;
-  }
+  .detail { padding: 28px 32px 32px; min-width: 0; }
+  .detail-empty { padding: 90px 40px; text-align: center; color: var(--text-faint); font-size: 14px; }
+  .detail-empty svg { width: 44px; height: 44px; margin-bottom: 12px; opacity: 0.5; }
 
   .detail-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 28px;
-    padding-bottom: 20px;
-    border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap;
+    margin-bottom: 24px; padding-bottom: 22px; border-bottom: 1px solid var(--border);
   }
-
-  .detail-name { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+  .detail-who { display: flex; gap: 16px; align-items: center; min-width: 0; }
+  .detail-avatar {
+    width: 56px; height: 56px; border-radius: 50%; flex-shrink: 0; object-fit: cover;
+    background: linear-gradient(135deg, #6366F1, #8B5CF6); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700;
+    box-shadow: 0 6px 18px rgba(99, 102, 241, 0.35);
+  }
+  .detail-name { font-size: 20px; font-weight: 800; letter-spacing: -0.3px; }
   .detail-email { font-size: 13px; color: var(--text-dim); }
+  .detail-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 
-  .score-badge { text-align: right; }
-  .score-badge .num {
-    font-size: 36px;
-    font-weight: 500;
-    font-variant-numeric: tabular-nums;
-    line-height: 1;
-    color: var(--accent-bright);
+  .score-badge { display: flex; align-items: center; gap: 14px; }
+  .score-ring {
+    --pct: 0; --ring: var(--accent-bright);
+    width: 76px; height: 76px; border-radius: 50%;
+    background: conic-gradient(var(--ring) calc(var(--pct) * 1%), var(--muted-bg) 0);
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    filter: drop-shadow(0 4px 12px rgba(0,0,0,0.12));
   }
-  .score-badge .label { font-size: 11px; color: var(--text-faint); margin-top: 4px; }
-
-  .section { margin-bottom: 28px; }
-  .section-title {
-    font-size: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--text-faint);
-    margin-bottom: 10px;
+  .score-ring.high { --ring: var(--ok); }
+  .score-ring.mid  { --ring: var(--amber); }
+  .score-ring.low  { --ring: var(--warn); }
+  .score-ring-inner {
+    width: 60px; height: 60px; border-radius: 50%; background: var(--panel);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.5px;
   }
+  .score-verdict { font-size: 15px; font-weight: 700; }
+  .score-verdict.high { color: var(--ok); }
+  .score-verdict.mid  { color: var(--amber); }
+  .score-verdict.low  { color: var(--warn); }
+  .score-badge .label { font-size: 12px; color: var(--text-faint); }
 
-  /* ---------- Interview link box ---------- */
+  .meta-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 28px; }
+  .meta-item { background: var(--panel-alt); border: 1px solid var(--border); border-radius: 11px; padding: 11px 14px; }
+  .meta-item .k { font-size: 11.5px; color: var(--text-faint); font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
+  .meta-item .v { font-size: 14px; font-weight: 700; margin-top: 3px; font-variant-numeric: tabular-nums; }
+
+  .section { margin-bottom: 30px; }
+  .section-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-faint); margin-bottom: 12px; }
+
+  /* Interview link box */
   .link-row { display: flex; gap: 8px; align-items: center; }
   .link-row input {
-    flex: 1;
-    background: var(--panel-alt);
-    color: var(--text-dim);
-    border: 1px solid var(--border);
-    padding: 9px 10px;
-    border-radius: 3px;
-    font-size: 12.5px;
-    font-family: 'SFMono-Regular', Consolas, monospace;
-    min-width: 0;
+    flex: 1; background: var(--panel-alt); color: var(--text-dim);
+    border: 1px solid var(--border); padding: 9px 12px; border-radius: 9px;
+    font-size: 12.5px; font-family: 'SFMono-Regular', Consolas, monospace; min-width: 0;
   }
-  .link-row button {
-    background: var(--accent-bright);
-    color: var(--accent-text);
-    border: none;
-    padding: 9px 16px;
-    border-radius: 3px;
-    font-weight: 500;
-    font-size: 12.5px;
-    cursor: pointer;
-    white-space: nowrap;
-    font-family: inherit;
-  }
-  .link-row button:hover { background: var(--accent); }
+  .session-ids-row { display: flex; gap: 20px; margin-top: 10px; font-size: 12px; color: var(--text-faint); flex-wrap: wrap; }
+  .session-ids-row span.mono { color: var(--text-dim); font-family: 'SFMono-Regular', Consolas, monospace; word-break: break-all; }
 
-  .session-ids-row {
-    display: flex;
-    gap: 20px;
-    margin-top: 10px;
-    font-size: 11.5px;
-    color: var(--text-faint);
-    flex-wrap: wrap;
-  }
-  .session-ids-row span.mono {
-    color: var(--text-dim);
-    font-family: 'SFMono-Regular', Consolas, monospace;
-    word-break: break-all;
-  }
+  /* Category score bars */
+  .category-scores { display: flex; flex-direction: column; gap: 12px; }
+  .category-score { display: grid; grid-template-columns: 140px 1fr 40px; align-items: center; gap: 14px; }
+  .category-score .name { font-size: 13.5px; color: var(--text-dim); }
+  .category-score .bar { height: 8px; background: var(--muted-bg); border-radius: 99px; overflow: hidden; }
+  .category-score .bar i { display: block; height: 100%; border-radius: 99px; background: var(--accent-grad); }
+  .category-score .val { font-size: 14px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
 
-  .category-scores { display: flex; gap: 24px; flex-wrap: wrap; }
-  .category-score { flex: 1; min-width: 90px; }
-  .category-score .val {
-    font-size: 22px;
-    font-weight: 500;
-    font-variant-numeric: tabular-nums;
-  }
-  .category-score .name { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+  .assess-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .assess { border-radius: 11px; padding: 14px 16px; border: 1px solid var(--border); }
+  .assess.pos { background: var(--ok-bg); border-color: transparent; }
+  .assess.neg { background: var(--warn-bg); border-color: transparent; }
+  .assess h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 6px; }
+  .assess.pos h4 { color: var(--ok); }
+  .assess.neg h4 { color: var(--warn); }
+  .prose { font-size: 14px; line-height: 1.65; color: var(--text); white-space: pre-line; }
 
-  .prose {
-    font-family: 'Source Serif 4', serif;
-    font-size: 15px;
-    line-height: 1.65;
-    color: var(--text);
-    max-width: 65ch;
-  }
+  .content-flags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .flag-chip { font-size: 12px; padding: 3px 10px; border-radius: 99px; background: var(--warn-bg); color: var(--warn); font-weight: 500; }
 
-  .content-flags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-  .flag-chip {
-    font-size: 11.5px;
-    padding: 3px 9px;
-    border-radius: 3px;
-    background: var(--warn-bg);
-    color: var(--warn-text);
-    border: 1px solid rgba(220,53,69,0.3);
-  }
+  .notice { padding: 12px 14px; border-radius: 11px; font-size: 13.5px; background: var(--muted-bg); color: var(--text-dim); }
+  .notice.danger { background: var(--warn-bg); color: var(--warn); }
 
-  .proctoring-summary {
-    display: flex;
-    gap: 28px;
-    padding: 14px 16px;
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    margin-bottom: 14px;
-    background: var(--panel-alt);
-    flex-wrap: wrap;
-  }
-  .proctoring-stat .val {
-    font-size: 20px;
-    font-weight: 500;
-    font-variant-numeric: tabular-nums;
-  }
+  /* Proctoring */
+  .proctoring-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 14px; }
+  .proctoring-stat { background: var(--panel-alt); border: 1px solid var(--border); border-radius: 11px; padding: 12px 16px; }
+  .proctoring-stat .val { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
   .proctoring-stat.warn .val { color: var(--warn); }
-  .proctoring-stat .name { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; }
+  .proctoring-stat .name { font-size: 12px; color: var(--text-faint); }
 
-  /* ---------- Reference photo ---------- */
-  .ref-photo-thumb {
-    width: 120px;
-    height: 120px;
-    object-fit: cover;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    cursor: pointer;
-    transition: border-color 0.15s ease;
-    display: block;
-  }
-  .ref-photo-thumb:hover { border-color: var(--accent-bright); }
-  .ref-photo-hint { font-size: 11px; color: var(--text-faint); margin-top: 4px; }
+  .ref-photo-thumb { width: 110px; height: 110px; object-fit: cover; border-radius: 11px; border: 1px solid var(--border); cursor: zoom-in; display: block; transition: border-color 0.15s ease, transform 0.15s ease; }
+  .ref-photo-thumb:hover { border-color: var(--accent-bright); transform: scale(1.03); }
+  .ref-photo-hint { font-size: 12px; color: var(--text-faint); margin-top: 6px; }
 
   #photoModalOverlay {
-    display: none;
-    position: fixed;
-    inset: 0;
-    background: rgba(10, 11, 13, 0.9);
-    z-index: 999;
-    align-items: center;
-    justify-content: center;
-    cursor: zoom-out;
-    padding: 40px;
+    display: none; position: fixed; inset: 0; background: rgba(8, 10, 16, 0.88);
+    z-index: 999; align-items: center; justify-content: center; cursor: zoom-out; padding: 40px;
   }
   #photoModalOverlay.show { display: flex; }
-  #photoModalImg {
-    max-width: 90vw;
-    max-height: 90vh;
-    object-fit: contain;
-    border-radius: 8px;
-    box-shadow: 0 8px 40px rgba(0,0,0,0.5);
-  }
+  #photoModalImg { max-width: 90vw; max-height: 90vh; object-fit: contain; border-radius: 10px; box-shadow: 0 8px 40px rgba(0,0,0,0.5); }
   #photoModalClose {
-    position: fixed;
-    top: 24px;
-    right: 28px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    color: var(--text);
-    border-radius: 4px;
-    padding: 8px 14px;
-    font-size: 12.5px;
-    cursor: pointer;
+    position: fixed; top: 24px; right: 28px; background: var(--panel); border: 1px solid var(--border);
+    color: var(--text); border-radius: 9px; padding: 8px 14px; font-size: 13px; cursor: pointer;
   }
-  #photoModalClose:hover { border-color: var(--text-faint); }
 
-  .flag-timeline {
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    overflow: hidden;
-  }
-  .flag-row {
-    display: grid;
-    grid-template-columns: 90px 1fr 70px;
-    gap: 12px;
-    padding: 9px 14px;
-    font-size: 12.5px;
-    border-bottom: 1px solid var(--border);
-  }
+  .flag-timeline { border: 1px solid var(--border); border-radius: 11px; overflow: hidden; }
+  .flag-row { display: grid; grid-template-columns: 80px 1fr auto 72px; align-items: center; gap: 12px; padding: 10px 14px; font-size: 13px; border-bottom: 1px solid var(--border); }
   .flag-row:last-child { border-bottom: none; }
   .flag-time { color: var(--text-faint); font-variant-numeric: tabular-nums; }
-  .flag-type { color: var(--text); }
-  .flag-counted { text-align: right; font-size: 11px; }
+  .flag-counted { text-align: right; font-size: 12px; font-weight: 500; }
   .flag-counted.yes { color: var(--warn); }
   .flag-counted.no { color: var(--text-faint); }
 
+  /* Transcript */
   .qa-item { padding: 16px 0; border-bottom: 1px solid var(--border); }
-  .qa-item:last-child { border-bottom: none; }
-  .qa-question { font-weight: 500; margin-bottom: 8px; font-size: 14px; }
-  .qa-tag { font-size: 11px; color: var(--text-faint); margin-left: 8px; font-weight: 400; }
-  .qa-answer {
-    font-family: 'Source Serif 4', serif;
-    font-size: 14px;
-    line-height: 1.6;
-    color: var(--text-dim);
-    margin-bottom: 8px;
-  }
-  .qa-scores { display: flex; gap: 14px; font-size: 12px; color: var(--text-faint); flex-wrap: wrap; }
-  .qa-scores span strong { color: var(--text-dim); font-variant-numeric: tabular-nums; }
-
+  .qa-item:last-child { border-bottom: none; padding-bottom: 0; }
+  .qa-question { font-weight: 700; margin-bottom: 8px; font-size: 14px; display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
+  .qa-num { color: var(--accent-bright); font-variant-numeric: tabular-nums; }
+  .qa-tag { font-size: 11.5px; font-weight: 500; color: var(--text-dim); background: var(--muted-bg); padding: 1px 9px; border-radius: 99px; }
+  .qa-answer { font-size: 14px; line-height: 1.65; color: var(--text-dim); background: var(--panel-alt); border: 1px solid var(--border); border-radius: 11px; padding: 12px 14px; margin-bottom: 10px; }
+  .qa-scores { display: flex; gap: 8px; flex-wrap: wrap; }
+  .qa-scores span { font-size: 12px; color: var(--text-dim); background: var(--muted-bg); padding: 2px 10px; border-radius: 99px; }
+  .qa-scores span strong { color: var(--text); font-variant-numeric: tabular-nums; }
   .no-answer { font-size: 13px; color: var(--text-faint); font-style: italic; }
 
-  /* Candidate counter-questions / repeat / clarification exchanges that
-     happened before the actual answer — stored in
-     question.generation_context.candidate_queries by turn_intent.py. */
+  /* Full conversation timeline */
+  .convo { display: flex; flex-direction: column; gap: 10px; max-height: 70vh; overflow-y: auto; padding: 4px 2px 4px 0; }
+  .convo-row { display: flex; flex-direction: column; max-width: 86%; }
+  .convo-row.interviewer { align-self: flex-start; }
+  .convo-row.candidate { align-self: flex-end; align-items: flex-end; }
+  .convo-who { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-faint); margin: 0 6px 3px; }
+  .convo-bubble { padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+  .convo-row.interviewer .convo-bubble { background: var(--panel-alt); border: 1px solid var(--border); border-top-left-radius: 4px; }
+  .convo-row.candidate .convo-bubble { background: var(--accent-soft); border-top-right-radius: 4px; }
+  .convo-bubble.inaudible { font-style: italic; color: var(--text-faint); }
+  .convo-en { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border); font-size: 12.5px; color: var(--text-dim); }
+  .convo-meta { display: inline-flex; gap: 6px; margin: 0 6px 3px; }
+  .lang-chip { font-size: 10.5px; font-weight: 600; padding: 0 7px; border-radius: 99px; background: var(--info-bg); color: var(--info); }
+  @media (max-width: 640px) { .convo-row { max-width: 96%; } }
+
   .qa-exchanges { margin: 10px 0; display: flex; flex-direction: column; gap: 8px; }
-  .qa-exchange { background: var(--panel-alt); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 12.5px; }
-  .qa-exchange .ex-tag {
-    display: inline-block; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.4px; color: var(--accent-bright); margin-bottom: 4px;
-  }
-  .qa-exchange .ex-said { color: var(--text); margin-bottom: 4px; }
+  .qa-exchange { background: var(--accent-soft); border-radius: 11px; padding: 9px 12px; font-size: 13px; }
+  .qa-exchange .ex-tag { display: inline-block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; color: var(--accent-bright); margin-bottom: 3px; }
+  .qa-exchange .ex-said { color: var(--text); margin-bottom: 3px; }
   .qa-exchange .ex-said::before { content: "Candidate: "; color: var(--text-faint); font-weight: 600; }
   .qa-exchange .ex-reply { color: var(--text-dim); }
   .qa-exchange .ex-reply::before { content: "Interviewer: "; color: var(--text-faint); font-weight: 600; }
 
   /* ============ RESPONSIVE ============ */
-  @media (max-width: 1200px) {
-    .stat-grid { grid-template-columns: repeat(2, 1fr); }
-    .forms-grid { grid-template-columns: 1fr; }
-  }
-
+  @media (max-width: 1400px) { .stat-grid { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 1200px) { .forms-grid { grid-template-columns: 1fr; } }
   @media (max-width: 1000px) {
     .layout { grid-template-columns: 1fr; }
+    .session-list-card { position: static; }
     .session-list { max-height: 40vh; }
+    .meta-grid { grid-template-columns: repeat(2, 1fr); }
+    .assess-grid { grid-template-columns: 1fr; }
   }
-
   @media (max-width: 900px) {
-    .sidebar {
-      position: fixed;
-      left: 0;
-      top: 0;
-      margin-left: -240px;
-    }
+    .sidebar { position: fixed; left: 0; top: 0; margin-left: -250px; }
     body.sidebar-open .sidebar { margin-left: 0; box-shadow: 4px 0 24px rgba(0,0,0,0.35); }
-    body.sidebar-hidden .sidebar { margin-left: -240px; }
+    body.sidebar-hidden .sidebar { margin-left: -250px; }
     body.sidebar-open.sidebar-hidden .sidebar { margin-left: 0; }
-    .detail { padding: 24px 20px; }
+    .detail { padding: 22px 18px; }
     .content { padding: 16px; }
-    .page-head, .topbar { padding-left: 16px; padding-right: 16px; }
-    .date-box { display: none; }
-    .create-session select,
-    .create-session textarea,
-    .create-session input[type="number"] { width: 100%; }
+    .topbar { padding-left: 16px; padding-right: 16px; }
+    .topbar-date { display: none; }
+  }
+  @media (max-width: 640px) {
+    .stat-grid { grid-template-columns: repeat(2, 1fr); }
+    .create-session form { grid-template-columns: 1fr; }
+    .add-candidate-form { grid-template-columns: 1fr; }
+    .proctoring-summary { grid-template-columns: 1fr; }
+    .category-score { grid-template-columns: 100px 1fr 36px; }
+    .flag-row { grid-template-columns: 70px 1fr auto; }
+    .flag-counted { display: none; }
   }
 
-  @media (max-width: 560px) {
+  /* ============ Cross-device hardening (CSS only) ============ */
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  body { overflow-x: hidden; }
+  img, video { max-width: 100%; }
+
+  /* Cards never force a sideways scroll on narrow phones */
+  .session-grid { grid-template-columns: repeat(auto-fill, minmax(min(290px, 100%), 1fr)); }
+  .session-name, .detail-name, .detail-email, .prose, .qa-answer, .qa-question span { overflow-wrap: anywhere; }
+  .detail-who { flex-wrap: wrap; }
+
+  .sidebar { height: 100dvh; }
+  .sidebar-foot { padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+  .topbar { padding-top: max(12px, env(safe-area-inset-top)); }
+
+  /* Tap targets + no stuck hover on touch screens */
+  @media (pointer: coarse) {
+    .icon-btn, .signout-btn { min-width: 44px; min-height: 44px; }
+    .btn, .filter-chip { min-height: 40px; display: inline-flex; align-items: center; }
+    .nav-item { padding-top: 12px; padding-bottom: 12px; }
+    input, select, textarea { font-size: 16px !important; }   /* stops iOS zooming into fields */
+  }
+  @media (hover: none) {
+    .session-card:hover { transform: none; box-shadow: var(--shadow-md); }
+  }
+
+  /* Phone: dim the page behind the open menu */
+  @media (max-width: 900px) {
+    body.sidebar-open::after { content: ''; position: fixed; inset: 0; background: rgba(8, 10, 16, 0.5); z-index: 45; }
+    .topbar { gap: 8px; }
+  }
+  @media (max-width: 640px) {
+    .page-head .btn { width: 100%; justify-content: center; }
+    .cards-head .filter-bar { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 4px; width: 100%; -webkit-overflow-scrolling: touch; }
+    .filter-chip { white-space: nowrap; flex-shrink: 0; }
+    .link-row { flex-direction: column; align-items: stretch; }
+    .link-row .btn { justify-content: center; }
+    .detail-header { gap: 14px; }
+    .score-badge { width: 100%; }
+    .stat-num { font-size: 24px; }
+    .create-session form { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 380px) {
     .stat-grid { grid-template-columns: 1fr; }
+    .content { padding: 12px; }
+    .meta-grid { grid-template-columns: 1fr; }
   }
 </style>
 </head>
@@ -853,56 +712,65 @@
 
   <!-- ====================== SIDEBAR ====================== -->
   <aside class="sidebar" id="sidebar">
-    <div class="sidebar-brand">White<span>Force</span></div>
+    <div class="sidebar-brand"><div class="brand-mark">WF</div><div>White<span>Force</span></div></div>
 
-    <div class="sidebar-user">
+    <nav class="sidebar-nav">
+      <div class="sidebar-label">Interviews</div>
+      <a class="nav-item {% if not status_filter %}active{% endif %}" href="?">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+        All sessions <span class="nav-count">{{ stats.total }}</span>
+      </a>
+      {% for value, label in status_choices %}
+        <a class="nav-item {% if status_filter == value %}active{% endif %}" href="?status={{ value }}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg>
+          {{ label }}
+        </a>
+      {% endfor %}
+
+      <div class="sidebar-label">Actions</div>
+      <a class="nav-item" href="#createSection">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 8v8M8 12h8"/></svg>
+        Create session
+      </a>
+      <a class="nav-item" href="#addCandidateSection" id="navAddCandidate">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="4"/><path d="M2 20c0-3.5 3-6 7-6s7 2.5 7 6M19 8v6M16 11h6"/></svg>
+        Add candidate
+      </a>
+      <a class="nav-item" href="#sessionsSection">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+        Session details
+      </a>
+    </nav>
+
+    <div class="sidebar-foot">
       <div class="avatar">{{ request.user.get_username|default:"R"|slice:":1"|upper }}</div>
       <div>
         <div class="sidebar-user-name">{{ request.user.get_username|default:"Recruiter" }}</div>
         <div class="sidebar-user-role">Recruiter</div>
       </div>
+      <form method="post" action="{% url 'admin:logout' %}" class="signout-form">
+        {% csrf_token %}
+        <button type="submit" class="signout-btn" title="Sign out" aria-label="Sign out">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+        </button>
+      </form>
     </div>
-
-    <div class="sidebar-label">Main Menu</div>
-
-    <a class="nav-item active" href="?">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
-      Dashboard
-    </a>
-    <div class="nav-sub">
-      <a href="?" class="{% if not status_filter %}active{% endif %}">All Sessions</a>
-      {% for value, label in status_choices %}
-        <a href="?status={{ value }}" class="{% if status_filter == value %}active{% endif %}">{{ label }}</a>
-      {% endfor %}
-    </div>
-
-    <a class="nav-item" href="#createSection">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/><rect x="3" y="3" width="18" height="18" rx="3"/></svg>
-      Create Session
-    </a>
-    <a class="nav-item" href="#addCandidateSection" id="navAddCandidate">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="4"/><path d="M2 20c0-3.5 3-6 7-6s7 2.5 7 6M19 8v6M16 11h6"/></svg>
-      Add Candidate
-    </a>
-    <a class="nav-item" href="#sessionsSection">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
-      Interview Sessions
-    </a>
   </aside>
 
   <!-- ====================== MAIN ====================== -->
   <div class="main">
 
-    <!-- Top bar -->
     <header class="topbar">
       <button type="button" class="icon-btn" id="sidebarToggle" aria-label="Toggle menu">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h10M4 18h16"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
       </button>
 
       <div class="search-box">
-        <input type="text" id="sessionSearch" placeholder="Search candidates in the session list…" autocomplete="off">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input type="text" id="sessionSearch" placeholder="Search by candidate name, email or role…" autocomplete="off" aria-label="Search sessions">
       </div>
+
+      <span class="topbar-date" id="topbarDate"></span>
 
       <button type="button" class="icon-btn theme-toggle" id="themeToggle" aria-label="Toggle light / dark mode" title="Toggle light / dark mode">
         <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
@@ -910,72 +778,51 @@
       </button>
     </header>
 
-    <!-- Page heading + status filter tabs -->
-    <div class="page-head">
-      <div class="page-head-top">
-        <div>
-          <div class="page-title">Hi, welcome back!</div>
-          <div class="page-sub">Your interview screening dashboard — White Force.</div>
-        </div>
-        <div class="date-box" id="dateBox">
-          <div class="date-part"><span class="big" id="dateDay">--</span><span class="small"><strong id="dateMonth">---</strong><span id="dateWeekday">---</span></span></div>
-        </div>
-      </div>
-
-      <div class="filter-bar">
-        <a href="?" class="filter-chip {% if not status_filter %}active{% endif %}">All</a>
-        {% for value, label in status_choices %}
-          <a href="?status={{ value }}" class="filter-chip {% if status_filter == value %}active{% endif %}">{{ label }}</a>
-        {% endfor %}
-      </div>
-    </div>
-
     <div class="content">
 
-      <!-- Stat cards (counts are computed in the browser from the session list below) -->
+      <div class="page-head">
+        <div>
+          <h1 class="page-title">Interview screening</h1>
+          <div class="page-sub">Review AI interview results, proctoring signals and transcripts in one place.</div>
+        </div>
+        <a class="btn" href="#createSection">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          New interview
+        </a>
+      </div>
+
+      {% if messages %}
+        <div class="flash-list">
+          {% for message in messages %}<div class="flash {{ message.tags }}" role="status">{{ message }}</div>{% endfor %}
+        </div>
+      {% endif %}
+
+      <!-- Stat cards: computed on the server over ALL sessions -->
       <div class="stat-grid">
         <div class="stat-card">
-          <div class="stat-top">
-            <div class="stat-icon purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-5 4 4 8-9"/></svg></div>
-            <div>
-              <div class="stat-num" id="statTotal">0</div>
-              <div class="stat-label">Total Sessions</div>
-            </div>
-          </div>
-          <svg class="spark purple" viewBox="0 0 200 34" preserveAspectRatio="none"><path d="M0 26 L12 20 L24 27 L36 18 L48 24 L60 14 L72 22 L84 12 L96 20 L108 10 L120 21 L132 15 L144 24 L156 13 L168 22 L180 16 L200 24 L200 34 L0 34 Z" fill="currentColor" opacity="0.14"/><path d="M0 26 L12 20 L24 27 L36 18 L48 24 L60 14 L72 22 L84 12 L96 20 L108 10 L120 21 L132 15 L144 24 L156 13 L168 22 L180 16 L200 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.55"/></svg>
+          <div class="stat-head">Total sessions <span class="stat-icon indigo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg></span></div>
+          <div class="stat-num" id="statTotal">{{ stats.total }}</div>
+          <div class="stat-note">{{ stats.pending }} pending</div>
         </div>
-
         <div class="stat-card">
-          <div class="stat-top">
-            <div class="stat-icon blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg></div>
-            <div>
-              <div class="stat-num" id="statCompleted">0</div>
-              <div class="stat-label">Completed</div>
-            </div>
-          </div>
-          <svg class="spark blue" viewBox="0 0 200 34" preserveAspectRatio="none"><path d="M0 20 L14 24 L28 16 L42 22 L56 12 L70 20 L84 26 L98 14 L112 22 L126 12 L140 20 L154 14 L168 24 L182 16 L200 22 L200 34 L0 34 Z" fill="currentColor" opacity="0.14"/><path d="M0 20 L14 24 L28 16 L42 22 L56 12 L70 20 L84 26 L98 14 L112 22 L126 12 L140 20 L154 14 L168 24 L182 16 L200 22" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.55"/></svg>
+          <div class="stat-head">Completed <span class="stat-icon green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg></span></div>
+          <div class="stat-num" id="statCompleted">{{ stats.completed }}</div>
+          <div class="stat-note">finished interviews</div>
         </div>
-
         <div class="stat-card">
-          <div class="stat-top">
-            <div class="stat-icon pink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
-            <div>
-              <div class="stat-num" id="statProgress">0</div>
-              <div class="stat-label">In Progress</div>
-            </div>
-          </div>
-          <svg class="spark pink" viewBox="0 0 200 34" preserveAspectRatio="none"><path d="M0 28 L20 24 L40 27 L60 20 L80 22 L100 8 L120 18 L140 12 L160 22 L180 18 L200 26 L200 34 L0 34 Z" fill="currentColor" opacity="0.14"/><path d="M0 28 L20 24 L40 27 L60 20 L80 22 L100 8 L120 18 L140 12 L160 22 L180 18 L200 26" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.55"/></svg>
+          <div class="stat-head">In progress <span class="stat-icon amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span></div>
+          <div class="stat-num" id="statProgress">{{ stats.in_progress }}</div>
+          <div class="stat-note">live right now</div>
         </div>
-
         <div class="stat-card">
-          <div class="stat-top">
-            <div class="stat-icon teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg></div>
-            <div>
-              <div class="stat-num" id="statTerminated">0</div>
-              <div class="stat-label">Terminated</div>
-            </div>
-          </div>
-          <svg class="spark teal" viewBox="0 0 200 34" preserveAspectRatio="none"><path d="M0 22 L16 16 L32 20 L48 12 L64 18 L80 14 L96 22 L112 16 L128 20 L144 12 L160 18 L176 14 L200 20 L200 34 L0 34 Z" fill="currentColor" opacity="0.14"/><path d="M0 22 L16 16 L32 20 L48 12 L64 18 L80 14 L96 22 L112 16 L128 20 L144 12 L160 18 L176 14 L200 20" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.55"/></svg>
+          <div class="stat-head">Terminated <span class="stat-icon red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg></span></div>
+          <div class="stat-num" id="statTerminated">{{ stats.terminated }}</div>
+          <div class="stat-note">{{ stats.flagged }} with proctoring violations</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-head">Average score <span class="stat-icon blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-5 4 4 8-9"/></svg></span></div>
+          <div class="stat-num">{{ stats.avg_score|floatformat:0|default:"—" }}</div>
+          <div class="stat-note">across rated interviews</div>
         </div>
       </div>
 
@@ -985,27 +832,35 @@
         <!-- ---------- Create session form ---------- -->
         <div class="card" id="createSection">
           <div class="card-head">
-            <div class="card-title">Create Interview Session</div>
+            <div class="card-title">Create interview session</div>
             <div class="card-desc">Pick a candidate, choose the interview type, paste the job description and set how many questions to ask.</div>
           </div>
           <div class="create-session">
             <form id="createSessionForm">
               {% csrf_token %}
-              <select name="candidate_id" id="candidateSelect" required>
+              <select name="candidate_id" id="candidateSelect" required aria-label="Candidate">
                 <option value="" disabled selected>Select candidate</option>
                 {% for c in candidates %}
                   <option value="{{ c.id }}">{{ c.name }}{% if c.parsing_status %} — {{ c.get_parsing_status_display }}{% endif %}</option>
                 {% endfor %}
               </select>
-              <select name="job_role_type" id="jobRoleType" required>
-                <option value="white_collar" selected>White-collar (professional)</option>
-                <option value="blue_collar">Blue-collar (hands-on)</option>
+              <select name="job_role_type" id="jobRoleType" required aria-label="Role type">
+                <option value="white_collar" selected>White-collar</option>
+                <option value="blue_collar">Blue-collar</option>
               </select>
-              <input type="number" name="max_questions" id="maxQuestions" value="5" min="1" max="15">
-              <textarea name="job_description_text" id="jdText" required placeholder="Paste job description here..." rows="2"></textarea>
-              <button type="submit" id="createSessionBtn">Create Session</button>
+              <div class="qty-field">
+                <label for="maxQuestions" class="qty-label">No. of Questions</label>
+                <input type="number" name="max_questions" id="maxQuestions" value="5" min="1" max="15" aria-label="Number of questions" title="Number of questions (1–15)">
+              </div>
+              <select name="language_mode" id="languageMode" aria-label="Interview language" style="grid-column: 1 / -1;">
+                {% for value, label in language_choices %}
+                  <option value="{{ value }}" {% if value == 'en' %}selected{% endif %}>Interview language: {{ label }}{% if value == 'both' %} (starts in English, switches to Hindi if the candidate speaks Hindi){% endif %}</option>
+                {% endfor %}
+              </select>
+              <textarea name="job_description_text" id="jdText" required placeholder="Paste the job description here…" rows="3" aria-label="Job description"></textarea>
+              <button type="submit" id="createSessionBtn" class="btn">Create session</button>
+              <div id="createSessionError" role="alert"></div>
             </form>
-            <div id="createSessionError"></div>
           </div>
         </div>
 
@@ -1016,199 +871,328 @@
             <div class="card-desc">Add a new candidate and optionally upload a resume for parsing.</div>
           </div>
           <div class="add-candidate">
-            <button type="button" class="add-candidate-toggle" id="addCandidateToggle">+ Add candidate</button>
+            <button type="button" class="btn btn-ghost" id="addCandidateToggle">+ Add candidate</button>
             <form id="addCandidateForm" class="add-candidate-form" enctype="multipart/form-data">
-              <input type="text" name="name" id="candName" placeholder="Full name" required>
-              <input type="email" name="email" id="candEmail" placeholder="Email" required>
-              <input type="tel" name="phone" id="candPhone" placeholder="Phone (optional)">
-              <input type="text" name="applied_role" id="candRole" placeholder="Applied role (optional)">
-              <input type="file" name="resume_file" id="candResume" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg">
-              <button type="submit" id="addCandidateBtn">Add Candidate</button>
-              <div id="addCandidateError"></div>
+              <input type="text" name="name" id="candName" placeholder="Full name" required aria-label="Full name">
+              <input type="email" name="email" id="candEmail" placeholder="Email" required aria-label="Email">
+              <input type="tel" name="phone" id="candPhone" placeholder="Phone (optional)" aria-label="Phone">
+              <input type="text" name="applied_role" id="candRole" placeholder="Applied role (optional)" aria-label="Applied role">
+              <input type="file" name="resume_file" id="candResume" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" aria-label="Resume file">
+              <button type="submit" id="addCandidateBtn" class="btn">Add candidate</button>
+              <div id="addCandidateError" role="alert"></div>
             </form>
           </div>
         </div>
 
       </div>
 
-      <div class="layout" id="sessionsSection">
+      <div id="sessionsSection">
+      {% if not selected_session %}
 
-        <!-- ---------- Session list ---------- -->
-        <div class="card session-list-card">
-          <div class="card-head">
-            <div class="card-title">Interview Sessions</div>
-            <div class="card-desc">Select a session to view its rating, proctoring and transcript.</div>
+        <!-- ---------- Session cards ---------- -->
+        <div class="cards-head">
+          <div>
+            <div class="card-title">Interview sessions</div>
+            <div class="card-desc">Click a card to open the full interview history — rating, proctoring and transcript.</div>
           </div>
-          <div class="session-list" id="sessionList">
-            {% for session in sessions %}
-              <a href="?session_id={{ session.id }}{% if status_filter %}&status={{ status_filter }}{% endif %}"
-                 class="session-row {% if selected_session and selected_session.id == session.id %}selected{% endif %}"
-                 data-status="{{ session.status }}"
-                 data-name="{{ session.candidate.name|lower }}">
-                <div class="session-row-top">
-                  <span class="session-name">{{ session.candidate.name }}</span>
-                  {% if session.final_rating %}
-                    <span class="session-score {% if session.final_rating.overall_score >= 70 %}high{% elif session.final_rating.overall_score < 40 %}low{% endif %}">
-                      {{ session.final_rating.overall_score|floatformat:0 }}
-                    </span>
-                  {% else %}
-                    <span class="session-score">—</span>
-                  {% endif %}
-                </div>
-                <div class="session-meta">
-                  <span class="status-pill {{ session.status }}">{{ session.get_status_display }}</span>
-                  <span class="role-pill {{ session.job_role_type }}">{{ session.get_job_role_type_display }}</span>
-                  {% if session.proctoring_session and session.proctoring_session.countable_violation_count > 0 %}
-                    <span class="risk-dot flagged"></span>
-                  {% else %}
-                    <span class="risk-dot"></span>
-                  {% endif %}
-                  <span>{{ session.questions_asked_count }}/{{ session.max_questions }} answered</span>
-                </div>
-              </a>
-            {% empty %}
-              <div class="empty-list">No interview sessions yet.</div>
+          <div class="filter-bar">
+            <a href="?" class="filter-chip {% if not status_filter %}active{% endif %}">All</a>
+            {% for value, label in status_choices %}
+              <a href="?status={{ value }}" class="filter-chip {% if status_filter == value %}active{% endif %}">{{ label }}</a>
             {% endfor %}
-            <div class="empty-list" id="noSearchResults" style="display:none;">No candidates match your search.</div>
           </div>
         </div>
 
-        <!-- ---------- Detail panel ---------- -->
-        <div class="card detail">
-          {% if not selected_session %}
-            <div class="detail-empty">Select a candidate from the list to view their interview.</div>
-
-          {% else %}
-            <div class="detail-header">
-              <div>
-                <div class="detail-name">{{ selected_session.candidate.name }}</div>
-                <div class="detail-email">{{ selected_session.candidate.email }}</div>
-                <div style="margin-top:6px;"><span class="role-pill {{ selected_session.job_role_type }}">{{ selected_session.get_job_role_type_display }}</span></div>
+        <div class="session-grid" id="sessionList">
+          {% for session in sessions %}
+            {% with rating=session.final_rating proc=session.proctoring_session %}
+            <a href="?session_id={{ session.id }}{% if status_filter %}&status={{ status_filter }}{% endif %}#sessionsSection"
+               class="session-card"
+               data-status="{{ session.status }}"
+               data-name="{{ session.candidate.name|lower }} {{ session.candidate.email|lower }} {{ session.candidate.applied_role|lower }} {{ session.serial }}">
+              <div class="sc-top">
+                <span class="sc-serial">#{{ session.serial|stringformat:"03d" }}</span>
+                {% if session.termination_reason == 'rescheduled' %}
+                  <span class="status-pill rescheduled">Rescheduled</span>
+                {% else %}
+                  <span class="status-pill {{ session.status }}">{{ session.get_status_display }}</span>
+                {% endif %}
               </div>
-              {% if selected_session.final_rating %}
+              <div class="sc-who">
+                <div class="session-avatar">{{ session.candidate.name|slice:":1"|upper }}</div>
+                <div class="sc-id">
+                  <div class="session-name">{{ session.candidate.name }}</div>
+                  <div class="session-sub" style="margin:0;">{{ session.candidate.applied_role|default:session.candidate.email }}</div>
+                </div>
+                {% if rating %}
+                  <span class="session-score {% if rating.overall_score >= 70 %}high{% elif rating.overall_score >= 40 %}mid{% else %}low{% endif %}">{{ rating.overall_score|floatformat:0 }}</span>
+                {% else %}
+                  <span class="session-score">—</span>
+                {% endif %}
+              </div>
+              <div class="sc-progress">
+                <div class="sc-progress-label"><span>Questions answered</span><strong>{{ session.questions_asked_count }} of {{ session.max_questions }}</strong></div>
+                <div class="bar"><i data-pct="{% widthratio session.questions_asked_count session.max_questions 100 %}"></i></div>
+              </div>
+              <div class="sc-foot">
+                <span class="role-pill {{ session.job_role_type }}">{{ session.get_job_role_type_display }}</span>
+                {% if proc and proc.countable_violation_count > 0 %}
+                  <span class="risk-flag">{{ proc.countable_violation_count }} violation{{ proc.countable_violation_count|pluralize }}</span>
+                {% endif %}
+                {% if session.rescheduled_for %}<span class="sc-resched">New slot: {{ session.rescheduled_for|date:"j M, g:i A" }}</span>{% endif %}
+                <span class="sc-date">{{ session.created_at|date:"d M Y" }}</span>
+              </div>
+            </a>
+            {% endwith %}
+          {% empty %}
+            <div class="empty-list card" style="grid-column:1/-1;">No interview sessions{% if status_filter %} with this status{% endif %} yet.</div>
+          {% endfor %}
+          <div class="empty-list card" id="noSearchResults" style="display:none; grid-column:1/-1;">No sessions match your search.</div>
+        </div>
+
+      {% else %}
+
+        <!-- ---------- Session history (detail) ---------- -->
+        <a class="btn btn-ghost back-btn" href="?{% if status_filter %}status={{ status_filter }}{% endif %}#sessionsSection">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+          Back to all sessions
+        </a>
+        <div class="card detail">
+            {% with rating=selected_session.final_rating proc=selected_session.proctoring_session %}
+            <div class="detail-header">
+              <div class="detail-who">
+                <div class="detail-avatar">{{ selected_session.candidate.name|slice:":1"|upper }}</div>
+                <div style="min-width:0;">
+                  <div class="detail-serial">SESSION #{{ selected_session.serial|stringformat:"03d" }}</div>
+                  <div class="detail-name">{{ selected_session.candidate.name }}</div>
+                  <div class="detail-email">{{ selected_session.candidate.email }}{% if selected_session.candidate.phone %} · {{ selected_session.candidate.phone }}{% endif %}</div>
+                  <div class="detail-tags">
+                    {% if selected_session.termination_reason == 'rescheduled' %}
+                      <span class="status-pill rescheduled">Rescheduled</span>
+                    {% else %}
+                      <span class="status-pill {{ selected_session.status }}">{{ selected_session.get_status_display }}</span>
+                    {% endif %}
+                    <span class="role-pill {{ selected_session.job_role_type }}">{{ selected_session.get_job_role_type_display }}</span>
+                    <span class="role-pill">{{ selected_session.get_language_mode_display }}</span>
+                    {% if selected_session.candidate.applied_role %}<span class="role-pill">{{ selected_session.candidate.applied_role }}</span>{% endif %}
+                  </div>
+                </div>
+              </div>
+              {% if rating %}
                 <div class="score-badge">
-                  <div class="num">{{ selected_session.final_rating.overall_score|floatformat:0 }}</div>
-                  <div class="label">Overall score</div>
+                  <div class="score-ring {% if rating.overall_score >= 70 %}high{% elif rating.overall_score >= 40 %}mid{% else %}low{% endif %}" data-pct="{{ rating.overall_score|floatformat:'0u' }}">
+                    <div class="score-ring-inner">{{ rating.overall_score|floatformat:0 }}</div>
+                  </div>
+                  <div>
+                    <div class="score-verdict {% if rating.overall_score >= 70 %}high{% elif rating.overall_score >= 40 %}mid{% else %}low{% endif %}">
+                      {% if rating.overall_score >= 70 %}Strong{% elif rating.overall_score >= 40 %}Average{% else %}Weak{% endif %}
+                    </div>
+                    <div class="label">Overall score / 100</div>
+                  </div>
                 </div>
               {% endif %}
             </div>
 
-            {% if selected_session.proctoring_session.reference_photo %}
+            {% if selected_session.termination_reason == 'rescheduled' %}
+              <div class="resched-banner" role="status">
+                <div class="rb-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div>
+                <div class="rb-body">
+                  <div class="rb-title">Candidate asked to reschedule</div>
+                  {% if selected_session.rescheduled_for %}
+                    <div class="rb-slot">{{ selected_session.rescheduled_for|date:"l, j F Y · g:i A" }}</div>
+                    <div class="rb-note">Agreed with the candidate during the interview. Create a new interview link for this time.</div>
+                  {% else %}
+                    <div class="rb-slot">No time agreed</div>
+                    <div class="rb-note">The candidate wanted to reschedule but a valid time could not be fixed. The recruiting team should contact them.</div>
+                  {% endif %}
+                </div>
+                <button type="button" class="btn" onclick="newInterviewFor('{{ selected_session.candidate.id }}')">New interview for this candidate</button>
+              </div>
+            {% endif %}
+
+            <div class="meta-grid">
+              <div class="meta-item"><div class="k">Created</div><div class="v">{{ selected_session.created_at|date:"d M Y, H:i" }}</div></div>
+              <div class="meta-item"><div class="k">Duration</div><div class="v">{% if selected_session.started_at and selected_session.ended_at %}{{ selected_session.started_at|timesince:selected_session.ended_at }}{% else %}—{% endif %}</div></div>
+              <div class="meta-item"><div class="k">No. of Questions Answered</div><div class="v">{{ selected_session.questions_asked_count }} of {{ selected_session.max_questions }}</div></div>
+              <div class="meta-item"><div class="k">Resume</div><div class="v">{{ selected_session.candidate.get_parsing_status_display|default:"—" }}</div></div>
+            </div>
+
+            {% if interview_link and selected_session.status == 'completed' or interview_link and selected_session.status == 'terminated' %}
+              <div class="section">
+                <div class="section-title">Candidate interview link</div>
+                <div class="notice">
+                  <strong>This link has expired.</strong> The interview has ended, so opening it shows "This interview is over" and the room will not connect.
+                  To interview {{ selected_session.candidate.name }} again, create a new session.
+                  <div style="margin-top:10px;">
+                    <button type="button" class="btn" onclick="newInterviewFor('{{ selected_session.candidate.id }}')">New interview for this candidate</button>
+                  </div>
+                </div>
+                <div class="session-ids-row"><div>Session ID: <span class="mono">{{ selected_session.id }}</span></div></div>
+              </div>
+            {% elif interview_link %}
+              <div class="section">
+                <div class="section-title">Candidate interview link</div>
+                {% if '127.0.0.1' in interview_link or 'localhost' in interview_link %}
+                  <div class="notice danger" style="margin-bottom:10px;">
+                    This link points to <strong>localhost</strong>, so it only opens on this computer. For a phone or another device,
+                    open this dashboard through your ngrok address and copy the link from there.
+                  </div>
+                {% endif %}
+                <div class="link-row">
+                  <input type="text" readonly value="{{ interview_link }}" id="interviewLinkInput" onclick="this.select();" aria-label="Interview link">
+                  <button type="button" class="btn" id="copyLinkBtn" onclick="copyInterviewLink()">Copy</button>
+                </div>
+                <div class="session-ids-row">
+                  <div>Session ID: <span class="mono">{{ selected_session.id }}</span></div>
+                </div>
+              </div>
+            {% endif %}
+
+            {% if proc.reference_photo %}
               <div class="section">
                 <div class="section-title">Reference photo</div>
-                <img src="{{ selected_session.proctoring_session.reference_photo.url }}"
-                     alt="Reference photo"
-                     class="ref-photo-thumb"
-                     onclick="openPhotoModal('{{ selected_session.proctoring_session.reference_photo.url }}')">
+                <img src="{{ proc.reference_photo.url }}" alt="Reference photo" class="ref-photo-thumb"
+                     onclick="openPhotoModal(this.src)">
                 <div class="ref-photo-hint">Click to view full size</div>
               </div>
             {% endif %}
 
-            {% if interview_link %}
-              <div class="section">
-                <div class="section-title">Candidate interview link</div>
-                <div class="link-row">
-                  <input type="text" readonly value="{{ interview_link }}" id="interviewLinkInput" onclick="this.select();">
-                  <button type="button" id="copyLinkBtn" onclick="copyInterviewLink()">Copy</button>
-                </div>
-                <div class="session-ids-row">
-                  <div>Session ID: <span class="mono">{{ selected_session.id }}</span></div>
-                  <div>Access token: <span class="mono">{{ selected_session.access_token }}</span></div>
-                </div>
-              </div>
-            {% endif %}
-
-            {% if selected_session.status == 'terminated' %}
+            {% if selected_session.status == 'terminated' and selected_session.termination_reason != 'rescheduled' %}
               <div class="section">
                 <div class="section-title">Termination reason</div>
-                <div class="prose">{{ selected_session.termination_note }}</div>
+                <div class="notice {% if selected_session.termination_reason == 'rescheduled' %}info{% else %}danger{% endif %}">
+                  <strong>{{ selected_session.get_termination_reason_display }}</strong>
+                  {% if selected_session.rescheduled_for %}<div style="margin-top:4px;">New slot: <strong>{{ selected_session.rescheduled_for|date:"l, j F Y, g:i A" }}</strong> — create a new interview link for this time.</div>{% endif %}
+                  {% if selected_session.termination_note %}<div style="margin-top:4px;">{{ selected_session.termination_note }}</div>{% endif %}
+                </div>
               </div>
             {% endif %}
 
-            {% if selected_session.final_rating %}
+            {% if rating %}
               <div class="section">
                 <div class="section-title">Category scores</div>
                 <div class="category-scores">
-                  {% for key, val in selected_session.final_rating.category_scores.items %}
+                  {% for key, val in rating.category_scores.items %}
                     <div class="category-score">
-                      <div class="val">{{ val|floatformat:0 }}</div>
                       <div class="name">{{ key|title }}</div>
+                      <div class="bar"><i data-pct="{{ val|floatformat:'0u' }}"></i></div>
+                      <div class="val">{{ val|floatformat:0 }}</div>
                     </div>
                   {% endfor %}
                 </div>
               </div>
 
-              {% if selected_session.final_rating.strengths %}
+              {% if rating.strengths or rating.concerns %}
                 <div class="section">
-                  <div class="section-title">Strengths</div>
-                  <div class="prose">{{ selected_session.final_rating.strengths }}</div>
+                  <div class="section-title">Assessment</div>
+                  <div class="assess-grid">
+                    {% if rating.strengths %}<div class="assess pos"><h4>Strengths</h4><div class="prose">{{ rating.strengths }}</div></div>{% endif %}
+                    {% if rating.concerns %}<div class="assess neg"><h4>Concerns</h4><div class="prose">{{ rating.concerns }}</div></div>{% endif %}
+                  </div>
                 </div>
               {% endif %}
 
-              {% if selected_session.final_rating.concerns %}
+              {% if rating.content_flags %}
                 <div class="section">
-                  <div class="section-title">Concerns</div>
-                  <div class="prose">{{ selected_session.final_rating.concerns }}</div>
-                </div>
-              {% endif %}
-
-              {% if selected_session.final_rating.content_flags %}
-                <div class="section">
-                  <div class="section-title">Flags</div>
+                  <div class="section-title">Content flags</div>
                   <div class="content-flags">
-                    {% for flag in selected_session.final_rating.content_flags %}
-                      <span class="flag-chip">{{ flag }}</span>
-                    {% endfor %}
+                    {% for flag in rating.content_flags %}<span class="flag-chip">{{ flag }}</span>{% endfor %}
                   </div>
                 </div>
               {% endif %}
             {% else %}
               <div class="section">
-                <div class="prose" style="color: var(--text-faint);">Rating not yet generated for this session.</div>
+                <div class="notice">
+                  {% if selected_session.termination_reason == 'rescheduled' and not selected_session.questions_asked_count %}
+                    No rating — the candidate asked to reschedule before answering any question.
+                  {% elif selected_session.status == 'completed' or selected_session.status == 'terminated' %}
+                    The rating is being generated and usually takes under a minute. Refresh this page to see it.
+                  {% else %}
+                    A rating will appear here once the interview has finished.
+                  {% endif %}
+                </div>
               </div>
             {% endif %}
 
-            {% if selected_session.proctoring_session %}
+            {% if proc %}
               <div class="section">
+                {% if proc.tracking_status %}
+                  {% if proc.tracking_status.face_tracking and proc.tracking_status.face_frames > 20 %}
+                    <div class="notice" style="margin-bottom:12px;">
+                      Camera checks were running: {{ proc.tracking_status.face_frames }} frames analysed{% if proc.tracking_status.object_detection %}, phone/notes detection on{% endif %}{% if proc.tracking_status.face_match %}, identity match on{% endif %}{% if proc.tracking_status.phone_browser %} (phone browser){% endif %}.
+                    </div>
+                  {% else %}
+                    <div class="notice danger" style="margin-bottom:12px;">
+                      <strong>Face tracking was not running in the candidate's browser</strong> ({{ proc.tracking_status.face_frames|default:0 }} frames analysed), so looking-away and face checks could not be made. A quiet proctoring report here does not mean the candidate behaved.
+                    </div>
+                  {% endif %}
+                {% endif %}
                 <div class="section-title">Proctoring</div>
                 <div class="proctoring-summary">
                   <div class="proctoring-stat">
-                    <div class="val">{{ selected_session.proctoring_session.risk_score|floatformat:0 }}</div>
+                    <div class="val">{{ proc.risk_score|floatformat:0 }}</div>
                     <div class="name">Risk score</div>
                   </div>
-                  <div class="proctoring-stat {% if selected_session.proctoring_session.countable_violation_count > 0 %}warn{% endif %}">
-                    <div class="val">{{ selected_session.proctoring_session.countable_violation_count }}</div>
+                  <div class="proctoring-stat {% if proc.countable_violation_count > 0 %}warn{% endif %}">
+                    <div class="val">{{ proc.countable_violation_count }}</div>
                     <div class="name">Violations</div>
                   </div>
                   <div class="proctoring-stat">
-                    <div class="val">{{ selected_session.proctoring_session.flags.count }}</div>
-                    <div class="name">Total signals logged</div>
+                    <div class="val">{{ proc.flags.all|length }}</div>
+                    <div class="name">Signals logged</div>
                   </div>
                 </div>
 
-                {% if selected_session.proctoring_session.flags.all %}
+                {% if proc.flags.all %}
                   <div class="flag-timeline">
-                    {% for flag in selected_session.proctoring_session.flags.all %}
+                    {% for flag in proc.flags.all %}
                       <div class="flag-row">
                         <span class="flag-time">{{ flag.occurred_at|time:"H:i:s" }}</span>
-                        <span class="flag-type">{{ flag.get_flag_type_display }}</span>
+                        <span>{{ flag.get_flag_type_display }}</span>
+                        <span class="sev-pill {{ flag.severity }}">{{ flag.get_severity_display }}</span>
                         <span class="flag-counted {% if flag.counted_toward_violation %}yes{% else %}no{% endif %}">
                           {% if flag.counted_toward_violation %}counted{% else %}logged{% endif %}
                         </span>
                       </div>
                     {% endfor %}
                   </div>
+                {% else %}
+                  <div class="notice">No proctoring signals were logged.</div>
                 {% endif %}
               </div>
             {% endif %}
 
             <div class="section">
-              <div class="section-title">Transcript</div>
+              <div class="section-title">Full conversation</div>
+              {% if selected_session.conversation.all %}
+                <div class="convo">
+                  {% for turn in selected_session.conversation.all %}
+                    <div class="convo-row {{ turn.speaker }}">
+                      <div class="convo-who">
+                        {% if turn.speaker == 'interviewer' %}Interviewer{% else %}Candidate{% endif %}
+                        <span class="lang-chip">{% if turn.language == 'hi' %}हिंदी{% else %}English{% endif %}</span>
+                        <span style="font-weight:400;">· {{ turn.created_at|date:"H:i:s" }}</span>
+                      </div>
+                      <div class="convo-bubble {% if turn.kind == 'inaudible' %}inaudible{% endif %}">
+                        {% if turn.kind == 'inaudible' %}(speech heard, but it could not be understood){% else %}{{ turn.text }}{% endif %}
+                        {% if turn.text_en %}<div class="convo-en"><strong>English:</strong> {{ turn.text_en }}</div>{% endif %}
+                      </div>
+                    </div>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="notice">The line-by-line conversation is recorded for interviews held after this feature was added. This interview's questions and answers are listed below.</div>
+              {% endif %}
+            </div>
+
+            <div class="section" style="margin-bottom:0;">
+              <div class="section-title">Questions, answers and scores</div>
               {% for question in selected_session.questions.all %}
                 <div class="qa-item">
                   <div class="qa-question">
-                    Q{{ question.order }}. {{ question.text }}
-                    <span class="qa-tag">{{ question.topic_tag }}</span>
+                    <span class="qa-num">Q{{ question.order }}</span>
+                    <span>{{ question.text }}</span>
+                    {% if question.topic_tag %}<span class="qa-tag">{{ question.topic_tag }}</span>{% endif %}
                   </div>
                   {% if question.generation_context.candidate_queries %}
                     <div class="qa-exchanges">
@@ -1225,20 +1209,22 @@
                   {% if question.answer and question.answer.transcript_text %}
                     <div class="qa-answer">{{ question.answer.transcript_text }}</div>
                     <div class="qa-scores">
-                      <span>Relevance <strong>{{ question.answer.analysis_json.relevance|default:"—" }}</strong></span>
-                      <span>Depth <strong>{{ question.answer.analysis_json.depth|default:"—" }}</strong></span>
-                      <span>Communication <strong>{{ question.answer.analysis_json.communication|default:"—" }}</strong></span>
+                      <span>Relevance <strong>{{ question.answer.analysis_json.relevance|stringformat:"s"|default:"—" }}</strong></span>
+                      <span>Depth <strong>{{ question.answer.analysis_json.depth|stringformat:"s"|default:"—" }}</strong></span>
+                      <span>Communication <strong>{{ question.answer.analysis_json.communication|stringformat:"s"|default:"—" }}</strong></span>
                     </div>
                   {% else %}
                     <div class="no-answer">Not answered — interview ended before this question.</div>
                   {% endif %}
                 </div>
+              {% empty %}
+                <div class="no-answer">No questions have been generated yet.</div>
               {% endfor %}
             </div>
-
-          {% endif %}
+            {% endwith %}
         </div>
 
+      {% endif %}
       </div>
     </div>
   </div>
@@ -1276,10 +1262,29 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closePhotoModal();
 });
 
+function newInterviewFor(candidateId) {
+  const select = document.getElementById('candidateSelect');
+  if (select) select.value = candidateId;
+  const section = document.getElementById('createSection');
+  if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const jd = document.getElementById('jdText');
+  if (jd) jd.focus({ preventScroll: true });
+}
+
 function getCsrfToken() {
   const match = document.cookie.match(/csrftoken=([^;]+)/);
   return match ? match[1] : '';
 }
+
+/* ---------- Apply progress-bar / score-ring percentages ----------
+   Kept out of inline style="" so the template tags never sit inside
+   a CSS value (was tripping the editor's CSS linter). */
+document.querySelectorAll('.bar > i[data-pct]').forEach((el) => {
+  el.style.width = (parseFloat(el.dataset.pct) || 0) + '%';
+});
+document.querySelectorAll('.score-ring[data-pct]').forEach((el) => {
+  el.style.setProperty('--pct', el.dataset.pct);
+});
 
 /* ---------- Theme toggle (light / dark) ---------- */
 document.getElementById('themeToggle').addEventListener('click', () => {
@@ -1297,33 +1302,32 @@ document.getElementById('sidebarToggle').addEventListener('click', () => {
     document.body.classList.toggle('sidebar-hidden');
   }
 });
+/* tap the dimmed area (the body's ::after backdrop) to close the phone menu */
+document.body.addEventListener('click', (e) => {
+  if (e.target === document.body) document.body.classList.remove('sidebar-open');
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') document.body.classList.remove('sidebar-open');
+});
 document.querySelectorAll('.sidebar a').forEach((a) => {
   a.addEventListener('click', () => document.body.classList.remove('sidebar-open'));
 });
 
 /* ---------- Header date ---------- */
 (function () {
-  const now = new Date();
-  document.getElementById('dateDay').textContent = now.getDate();
-  document.getElementById('dateMonth').textContent =
-    now.toLocaleString('en-US', { month: 'short' }).toUpperCase() + ' ' + now.getFullYear();
-  document.getElementById('dateWeekday').textContent = now.toLocaleString('en-US', { weekday: 'long' });
+  const el = document.getElementById('topbarDate');
+  if (el) el.textContent = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 })();
 
-/* ---------- Stat cards (counted from the rendered session rows) ---------- */
-(function () {
-  const rows = document.querySelectorAll('#sessionList .session-row');
-  const count = (s) => Array.from(rows).filter((r) => r.dataset.status === s).length;
-  document.getElementById('statTotal').textContent = rows.length;
-  document.getElementById('statCompleted').textContent = count('completed');
-  document.getElementById('statProgress').textContent = count('in_progress');
-  document.getElementById('statTerminated').textContent = count('terminated');
-})();
+/* ---------- Tidy category labels (problem_solving -> Problem Solving) ---------- */
+document.querySelectorAll('.category-score .name').forEach((el) => {
+  el.textContent = el.textContent.replace(/_/g, ' ');
+});
 
 /* ---------- Session search (client-side filter) ---------- */
 document.getElementById('sessionSearch').addEventListener('input', (e) => {
   const q = e.target.value.trim().toLowerCase();
-  const rows = document.querySelectorAll('#sessionList .session-row');
+  const rows = document.querySelectorAll('#sessionList .session-card');
   let visible = 0;
   rows.forEach((r) => {
     const match = !q || (r.dataset.name || '').includes(q);
@@ -1392,7 +1396,7 @@ addCandidateForm.addEventListener('submit', async (e) => {
     errorBox.textContent = err.message || 'Failed to add candidate.';
     errorBox.style.display = 'block';
     btn.disabled = false;
-    btn.textContent = 'Add Candidate';
+    btn.textContent = 'Add candidate';
   }
 });
 
@@ -1409,6 +1413,7 @@ document.getElementById('createSessionForm').addEventListener('submit', async (e
   const payload = {
     candidate_id: document.getElementById('candidateSelect').value,
     job_role_type: document.getElementById('jobRoleType').value,
+    language_mode: document.getElementById('languageMode').value,
     job_description_text: document.getElementById('jdText').value,
     max_questions: parseInt(document.getElementById('maxQuestions').value, 10),
   };
@@ -1434,7 +1439,7 @@ document.getElementById('createSessionForm').addEventListener('submit', async (e
     errorBox.textContent = err.message || 'Failed to create session.';
     errorBox.style.display = 'block';
     btn.disabled = false;
-    btn.textContent = 'Create Session';
+    btn.textContent = 'Create session';
   }
 });
 </script>

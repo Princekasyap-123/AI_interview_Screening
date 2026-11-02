@@ -38,6 +38,8 @@ class TTSPlayer {
   constructor() {
     this.synth = window.speechSynthesis;
     this.voice = null;
+    this.voiceHi = null;             // browser fallback voice for Hindi
+    this.lang = "en";                // "en" | "hi": the language the interviewer speaks now
 
     // Browser-voice speaking style (fallback path only).
     this.rate = 0.9;
@@ -112,7 +114,17 @@ class TTSPlayer {
   // Main entry point — called from interviewSocket.on("turn", ...)
   // ------------------------------------------------------------------
 
+  /** "en" | "hi" — selects the server voice (and the browser fallback voice) for what is spoken next. */
+  setLanguage(lang) {
+    const next = lang === "hi" ? "hi" : "en";
+    if (next === this.lang) return;
+    this.lang = next;
+    this.asideCache.clear();          // cached aside audio belongs to the other voice
+    console.log("[TTSPlayer] interviewer language:", next);
+  }
+
   handleTurn(turn) {
+    if (turn.language) this.setLanguage(turn.language);
     const speakableActions = ["speak_intro", "speak_question", "speak_follow_up"];
     if (speakableActions.includes(turn.action) && turn.text) {
       this.speak(turn.text);
@@ -158,10 +170,15 @@ class TTSPlayer {
   /** Fetches and caches aside audio in the background (call once at start). */
   prefetchAsides(lines) {
     if (!this.useServerVoice || !this._sessionId()) return;
-    for (const t of lines) {
-      if (this.asideCache.has(t)) continue;
-      this._fetchChunk(t).then((b) => this.asideCache.set(t, b)).catch(() => {});
-    }
+    const queue = lines.filter((t) => !this.asideCache.has(t));
+    const worker = async () => {                    // 2 workers: the server makes one voice clip at a time anyway
+      while (queue.length) {
+        const t = queue.shift();
+        try { this.asideCache.set(t, await this._fetchChunk(t)); } catch (e) { /* fetched on demand later */ }
+      }
+    };
+    worker();
+    worker();
   }
 
   /** Speaks text as an aside. Resolves true when done, false if skipped. */
@@ -224,7 +241,7 @@ class TTSPlayer {
   /** Splits text into sentence-sized chunks (<= ~280 chars, short ones merged). */
   static _chunks(text) {
     const sentences = String(text).replace(/\s+/g, " ").trim()
-      .split(/(?<=[.!?…])\s+(?=[A-Z0-9"'(])/);
+      .split(/(?<=[.!?…।])\s+(?=[A-Z0-9"'(ऀ-ॿ])/);   // Hindi: no capitals, sentences end with "।" (mirror of tts_prefetch.py)
     const out = [];
     for (let s of sentences) {
       while (s.length > 280) {                       // very long sentence: cut at a comma/space
@@ -269,7 +286,7 @@ class TTSPlayer {
     };
 
     const sentences = String(text).replace(/\s+/g, " ").trim()
-      .split(/(?<=[.!?\u2026])\s+(?=[A-Z0-9"'(])/).filter(Boolean);
+      .split(/(?<=[.!?\u2026\u0964])\s+(?=[A-Z0-9"'(\u0900-\u097f])/).filter(Boolean);
     const out = [];
     for (let s of sentences) {
       for (;;) {
@@ -307,7 +324,7 @@ class TTSPlayer {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
-      body: JSON.stringify({ session_id: this._sessionId(), text }),
+      body: JSON.stringify({ session_id: this._sessionId(), text, lang: this.lang }),
     });
     if (!res.ok) throw new Error(`TTS HTTP ${res.status}`);
     const data = await res.arrayBuffer();
@@ -401,7 +418,7 @@ class TTSPlayer {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ session_id: this._sessionId(), text }),
+        body: JSON.stringify({ session_id: this._sessionId(), text, lang: this.lang }),
         signal: ctrl.signal,
       });
       if (!res.ok) throw new Error(`lip-sync HTTP ${res.status}`);
@@ -581,6 +598,9 @@ class TTSPlayer {
       }
       this.voice = chosen;
       console.log("[TTSPlayer] fallback browser voice:", this.voice ? `${this.voice.name} (${this.voice.lang})` : "none");
+
+      const hindi = voices.filter((v) => /^hi[-_]/i.test(v.lang));
+      this.voiceHi = hindi.find((v) => /swara|kalpana|female/i.test(v.name)) || hindi.find((v) => !isMale(v)) || hindi[0] || null;
     };
 
     pickVoice();
@@ -597,7 +617,12 @@ class TTSPlayer {
     this.synth.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
-    if (this.voice) utterance.voice = this.voice;
+    if (this.lang === "hi") {
+      utterance.lang = "hi-IN";
+      if (this.voiceHi) utterance.voice = this.voiceHi;
+    } else if (this.voice) {
+      utterance.voice = this.voice;
+    }
     utterance.rate = this.rate;
     utterance.pitch = this.pitch;
 

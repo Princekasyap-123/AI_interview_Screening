@@ -1,6 +1,8 @@
 # apps/interviews/services/final_rating.py
 
 import logging
+import threading
+import time
 
 from django.db import transaction
 
@@ -174,3 +176,64 @@ def _create_no_data_rating(session: InterviewSession) -> FinalRating:
         recruiter_visible=True,
         candidate_visible=False,
     )
+
+
+# ----------------------------------------------------------------------
+# Fallback when no Celery worker is running
+# ----------------------------------------------------------------------
+
+_in_flight: set = set()
+_in_flight_lock = threading.Lock()
+
+
+def generate_rating_if_missing(session_id) -> bool:
+    """Synchronously creates the rating unless it exists. True when a rating exists afterwards. Never raises."""
+    from django.db import IntegrityError, close_old_connections
+
+    close_old_connections()
+    try:
+        session = (
+            InterviewSession.objects.select_related("candidate")
+            .prefetch_related("questions__answer")
+            .filter(id=session_id)
+            .first()
+        )
+        if session is None:
+            return False
+        if FinalRating.objects.filter(session_id=session_id).exists():
+            return True
+        generate_final_rating_for_session(session)
+        return True
+    except IntegrityError:                      # a Celery worker made it at the same moment
+        return True
+    except Exception as exc:
+        logger.error("Background rating failed for session %s: %s", session_id, exc)
+        return False
+    finally:
+        close_old_connections()
+
+
+def ensure_rating_in_background(session_id, delay_seconds: float = 0):
+    """
+    Makes sure a finished interview gets its rating even when no Celery worker is running.
+    With delay_seconds the Celery task gets a head start (a rating made by the worker is simply
+    found and left alone). One job per session at a time. Returns the thread (None if one is already running).
+    """
+    key = str(session_id)
+    with _in_flight_lock:
+        if key in _in_flight:
+            return None
+        _in_flight.add(key)
+
+    def _job():
+        try:
+            if delay_seconds:
+                time.sleep(delay_seconds)
+            generate_rating_if_missing(key)
+        finally:
+            with _in_flight_lock:
+                _in_flight.discard(key)
+
+    thread = threading.Thread(target=_job, name=f"rating-{key[:8]}", daemon=True)
+    thread.start()
+    return thread

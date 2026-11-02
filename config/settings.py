@@ -212,6 +212,31 @@ CORS_ALLOW_CREDENTIALS = True
 # Speech-to-text language. "en" = English only; set STT_LANGUAGE= (empty) in .env
 # to let Whisper auto-detect, which is better for Hindi / Hinglish candidates.
 STT_LANGUAGE = os.environ.get("STT_LANGUAGE", "en")
+STT_MODEL = os.environ.get("STT_MODEL") or None     # default: whisper-large-v3-turbo (see stt_client.py)
+# Opt-in: keep every answer's audio + Whisper's transcript in media/stt_samples/ (to compare speech engines on
+# real recordings). Stores candidate voices, so leave it off unless candidates have agreed.
+STT_KEEP_AUDIO = os.environ.get("STT_KEEP_AUDIO", "0") == "1"
+# Hindi interviewer voice: "edge" = Microsoft neural Indian voice (needs internet, falls back to Kokoro) or "kokoro".
+HINDI_TTS_ENGINE = os.environ.get("HINDI_TTS_ENGINE", "edge")
+EDGE_TTS_VOICE_HI = os.environ.get("EDGE_TTS_VOICE_HI", "hi-IN-SwaraNeural")
+EDGE_TTS_RATE_HI = os.environ.get("EDGE_TTS_RATE_HI", "+0%")
+
+# --- Rescheduling (a candidate who cannot interview now picks a new slot) ---
+# Working days are Monday-Friday. Review the holiday list for your company/region and
+# year, or override it with INTERVIEW_HOLIDAYS="2026-12-25:Christmas,2027-01-26:Republic Day".
+INTERVIEW_WORK_START_HOUR = int(os.environ.get("INTERVIEW_WORK_START_HOUR", "11"))
+INTERVIEW_WORK_END_HOUR = int(os.environ.get("INTERVIEW_WORK_END_HOUR", "17"))
+INTERVIEW_RESCHEDULE_MAX_DAYS = int(os.environ.get("INTERVIEW_RESCHEDULE_MAX_DAYS", "30"))
+INTERVIEW_MIN_NOTICE_HOURS = int(os.environ.get("INTERVIEW_MIN_NOTICE_HOURS", "2"))
+_DEFAULT_HOLIDAYS = [
+    "2026-10-02:Gandhi Jayanti", "2026-10-20:Dussehra", "2026-11-08:Diwali",
+    "2026-11-24:Guru Nanak Jayanti", "2026-12-25:Christmas",
+    "2027-01-01:New Year's Day", "2027-01-26:Republic Day",
+]
+INTERVIEW_HOLIDAYS = (
+    [h.strip() for h in os.environ["INTERVIEW_HOLIDAYS"].split(",") if h.strip()]
+    if os.environ.get("INTERVIEW_HOLIDAYS") else _DEFAULT_HOLIDAYS
+)
 # Optional: override the model used to score each answer (default: LLMClient.REASONING_MODEL).
 ANSWER_ANALYSIS_MODEL = os.environ.get("ANSWER_ANALYSIS_MODEL") or None
 MAX_FOLLOW_UPS_PER_QUESTION = int(os.environ.get("MAX_FOLLOW_UPS_PER_QUESTION", "1"))

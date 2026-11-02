@@ -3,10 +3,12 @@
 import json
 import logging
 import re
+import threading
+import time
 from typing import Any
 
 from django.conf import settings
-from groq import Groq, BadRequestError
+from groq import Groq, BadRequestError, RateLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,33 @@ class LLMClient:
         # Created on first use, so importing this module (manage.py check,
         # migrations, tests, DEBUG runs without a key) never fails.
         self._client = None
+        # Groq limits tokens PER MODEL per day/minute. When one model is out of quota, its calls
+        # go to the sibling model (own quota) for a while instead of failing every request —
+        # a failed intent check used to silently turn the candidate's question into an "answer".
+        self._blocked_until: dict[str, float] = {}
+        self._block_lock = threading.Lock()
+
+    def _sibling(self, model: str) -> str | None:
+        return {self.FAST_MODEL: self.REASONING_MODEL, self.REASONING_MODEL: self.FAST_MODEL}.get(model)
+
+    def _usable(self, model: str) -> str:
+        """The model to call now: `model`, or its sibling while `model` is rate-limited."""
+        with self._block_lock:
+            blocked = self._blocked_until.get(model, 0) > time.time()
+        sibling = self._sibling(model)
+        if blocked and sibling and self._blocked_until.get(sibling, 0) <= time.time():
+            return sibling
+        return model
+
+    def _mark_rate_limited(self, model: str, exc: Exception) -> None:
+        wait = 300.0
+        m = re.search(r"try again in (?:(\d+)m)?\s*(?:([\d.]+)s)?", str(exc))
+        if m and (m.group(1) or m.group(2)):
+            wait = float(m.group(1) or 0) * 60 + float(m.group(2) or 0) + 5
+        wait = min(max(wait, 30.0), 3600.0)
+        with self._block_lock:
+            self._blocked_until[model] = time.time() + wait
+        logger.warning("Groq rate limit on %s — using %s for the next %.0f s.", model, self._sibling(model), wait)
 
     @property
     def client(self) -> Groq:
@@ -74,6 +103,7 @@ class LLMClient:
         max_tokens: int = 2048,
         reasoning_effort: str | None = None,
     ) -> str:
+        model = self._usable(model)
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": [
@@ -94,6 +124,16 @@ class LLMClient:
         except BadRequestError:
             # Let callers (generate_json) inspect and retry this one.
             raise
+        except RateLimitError as exc:
+            sibling = self._sibling(model)
+            self._mark_rate_limited(model, exc)
+            if sibling is None:
+                logger.error("Groq rate limit on %s: %s", model, exc)
+                raise RuntimeError(f"LLM call failed: {exc}") from exc
+            return self._chat(
+                system_prompt=system_prompt, user_prompt=user_prompt, model=sibling, json_mode=json_mode,
+                temperature=temperature, max_tokens=max_tokens, reasoning_effort=reasoning_effort,
+            )
         except Exception as exc:
             logger.error("Groq API call failed: %s", exc, exc_info=True)
             raise RuntimeError(f"LLM call failed: {exc}") from exc
@@ -218,7 +258,7 @@ class LLMClient:
         yielding, so the caller's accumulated-so-far text (or its own
         fallback) is what gets used.
         """
-        model = model or self.FAST_MODEL
+        model = self._usable(model or self.FAST_MODEL)
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": [
@@ -233,7 +273,17 @@ class LLMClient:
             kwargs["extra_body"] = {"reasoning_effort": reasoning_effort}
 
         try:
-            stream = self.client.chat.completions.create(**kwargs)
+            try:
+                stream = self.client.chat.completions.create(**kwargs)
+            except RateLimitError as exc:
+                sibling = self._sibling(model)
+                self._mark_rate_limited(model, exc)
+                if sibling is None:
+                    raise
+                kwargs["model"] = sibling
+                if reasoning_effort and sibling in self._REASONING_EFFORT_MODELS:
+                    kwargs["extra_body"] = {"reasoning_effort": reasoning_effort}
+                stream = self.client.chat.completions.create(**kwargs)
             for event in stream:
                 if not event.choices:
                     continue

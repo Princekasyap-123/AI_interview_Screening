@@ -86,20 +86,20 @@ class LipsyncEngine:
     def clip_path(self, clip_id: str) -> Path:
         return self.cache_dir / f"{clip_id}.mp4"
 
-    def _clip_id(self, text: str) -> str:
-        key = f"musetalk-v15|{tts_engine.model_file}|{tts_engine.voice}|{tts_engine.speed}|{text}"
+    def _clip_id(self, text: str, lang: str = "en") -> str:
+        key = f"musetalk-v15|{tts_engine.model_file}|{tts_engine._voice_for(lang)}|{tts_engine.speed}|{text}"
         return hashlib.sha256(key.encode("utf-8")).hexdigest()[:40]
 
-    def render_text(self, text: str) -> LipsyncClipResult:
+    def render_text(self, text: str, lang: str = "en") -> LipsyncClipResult:
         if not self.url:
             raise LipsyncNotAvailableError("MUSETALK_URL is not set")
 
-        clip_id = self._clip_id(text)
+        clip_id = self._clip_id(text, lang)
         path = self.clip_path(clip_id)
         if path.exists():
             return LipsyncClipResult(clip_id=clip_id, duration_ms=0, infer_ms=0)
 
-        wav = tts_engine.synthesize(text)
+        wav = tts_engine.synthesize(text, lang=lang)
         t0 = time.time()
         try:
             r = requests.post(
